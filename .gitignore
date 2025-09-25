@@ -2,3 +2,5 @@ songsbackup
 songs
 temp_songs
 .env
+.cache
+status_message_id.txt

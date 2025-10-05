@@ -1,4 +1,10 @@
 songsbackup
 songs
 temp_songs
+lyrics_cache
+autoplay_state.json
+status_message_id.txt
+start.bat
 .env
+.cache
+.cache

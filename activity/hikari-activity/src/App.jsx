@@ -16,21 +16,19 @@ export default function App() {
 
   useEffect(() => {
     async function setupDiscord() {
-      await discordSdk.ready();
-      
-      const { code } = await discordSdk.commands.authorize({
-        client_id: import.meta.env.VITE_DISCORD_CLIENT_ID,
-        response_type: 'code',
-        state: '',
-        prompt: 'none',
-        scope: ['identify', 'guilds', 'rpc.voice.read'],
-      });
-
-      // In a production app, you would exchange this code for an access token via your backend.
-      // For this local/trusted activity, we bypass full OAuth and just grab the guild context.
-      const authData = await discordSdk.commands.authenticate({ access_token: 'mock_token' });
-      setAuth(authData);
-      setGuildId(discordSdk.guildId);
+      try {
+        // 1. Tell Discord the iframe is ready
+        await discordSdk.ready();
+        
+        // 2. Grab the guildId immediately without forcing a user login
+        if (discordSdk.guildId) {
+          setGuildId(discordSdk.guildId);
+        } else {
+          console.error("Not in a server voice channel!");
+        }
+      } catch (err) {
+        console.error("Failed to initialize Discord SDK:", err);
+      }
     }
     setupDiscord();
   }, []);

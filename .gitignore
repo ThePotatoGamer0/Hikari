@@ -1,9 +1,5 @@
-songsbackup
-songs
-temp_songs
-lyrics_cache
-autoplay_state.json
-status_message_id.txt
+servers
 start.bat
 .env
 .cache
+*.log

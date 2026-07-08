@@ -1,1031 +1,2129 @@
-# main.py
-# Enhanced Hikari Melody bot with:
-# - Audio normalization (FFmpeg loudnorm)
-# - Silence trimming
-# - Parallelized downloads
-# - Edit queue (processes queued edit tasks every 5 seconds)
-# - Autoplay memory (persisted)
-# - Lyrics caching
-# - Unified logging format and general optimizations
-#
-# NOTE: This single-file approach keeps behavior inline with your existing bot features.
-# Requirements: ffmpeg available on PATH, yt_dlp, spotipy, lyricsgenius, python-dotenv, discord.py
-
 import discord
-from discord import app_commands
-from discord.ext import tasks, commands
+import wavelink
 import os
-import shutil
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
-from dotenv import load_dotenv
-import asyncio
-import re
-import yt_dlp
-from collections import Counter, deque
-import datetime
-import random
-import time
-from lyricsgenius import Genius
-import subprocess
-import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import sys
+import datetime
+import asyncio
+import spotipy
+import random
+import string
+import json
+import math
+import aiohttp
+import re
+import time
+from aiohttp import web
+from collections import deque
+from spotipy.oauth2 import SpotifyClientCredentials
+from discord import app_commands
+from discord.ext import commands
+from dataclasses import dataclass, field
+from typing import Optional, Dict, List, Union, Set
 
-# --- Logging (unified format) ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-log = logging.getLogger("hikari")
-
-# --- Load Environment Variables ---
+# ====================================
+# INITIALIZATION & LOGGING
+# ====================================
+from dotenv import load_dotenv
 load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
-GENIUS_API_TOKEN = os.getenv('GENIUS_API_TOKEN')
-SPOTIPY_CLIENT_ID = os.getenv('SPOTIPY_CLIENT_ID')
-SPOTIPY_CLIENT_SECRET = os.getenv('SPOTIPY_CLIENT_SECRET')
 
-# --- Constants & Global State ---
-PLAYLIST_URL = "https://open.spotify.com/playlist/6oOWU4Pfv8IKJTC90bH0Qm?si=bf6cbf28e4864ecf"
-SONGS_DIR = "songs"
-TEMP_DIR = "songs_temp"
-STATUS_MESSAGE_ID_FILE = "status_message_id.txt"
-AUTOPLAY_STATE_FILE = "autoplay_state.json"
-LYRICS_CACHE_DIR = "lyrics_cache"
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-g_spotify_tracks = []
-g_status_message = None
-g_currently_playing_info = {}
-g_last_sync_time = None
-g_last_edit_time = 0
-g_autoplay_enabled = False
-g_manual_stop = False
-g_recently_played = deque(maxlen=20)  # keep track of last 20 songs
-g_spotify_user_cache = {}  # cache for resolved Spotify user display names & urls
-genius = Genius(GENIUS_API_TOKEN) if GENIUS_API_TOKEN else None
+file_handler = logging.FileHandler("bot.log")
+file_handler.setFormatter(formatter)
+root_logger.addHandler(file_handler)
 
-# Edit queue: tasks that perform "edits" (status message edits, filesystem renames/deletes, etc.)
-# All queued edits will be processed by a background task every 5 seconds
-edit_queue: asyncio.Queue | None = None
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
+root_logger.addHandler(console_handler)
 
-# ThreadPoolExecutor for downloads and blocking blocking calls
-download_executor: ThreadPoolExecutor | None = None
+logger = logging.getLogger("HikariBot")
 
-# Lyrics cache directory ensure exists
-os.makedirs(LYRICS_CACHE_DIR, exist_ok=True)
 
-# Autoplay state file: load persisted state (last played file, autoplay toggle)
-autoplay_state = {
-    "last_played": None,
-    "autoplay_enabled": False
-}
-if os.path.exists(AUTOPLAY_STATE_FILE):
-    try:
-        with open(AUTOPLAY_STATE_FILE, "r", encoding="utf-8") as f:
-            autoplay_state.update(json.load(f))
-            g_autoplay_enabled = autoplay_state.get("autoplay_enabled", False)
-            log.info("Loaded autoplay state from disk.")
-    except Exception as e:
-        log.warning(f"Failed to load autoplay state: {e}")
+# ====================================
+# HELPERS
+# ====================================
+def generate_uid(length=5):
+    """Generates a short, random alphanumeric ID for queue tracks."""
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
-# --- Set up Clients & Intents ---
-intents = discord.Intents.default()
-intents.message_content = True
-intents.voice_states = True
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-try:
-    sp = spotipy.Spotify(
-        auth_manager=SpotifyClientCredentials(client_id=SPOTIPY_CLIENT_ID, client_secret=SPOTIPY_CLIENT_SECRET)
-    )
-    log.info("Successfully connected to Spotify API.")
-except Exception as e:
-    sp = None
-    log.warning(f"Error connecting to Spotify API: {e}")
-
-# --- Helper Functions ---
-def sanitize_filename(name: str) -> str:
-    sanitized = re.sub(r'[\\/*?:"<>|]', "", name)
-    return sanitized.strip().rstrip(' .')
-
-def get_emoji(name: str):
-    if not bot.guilds:
-        return "🎵"
-    guild = bot.guilds[0]
-    emoji = discord.utils.get(guild.emojis, name=name)
-    return str(emoji) if emoji else "🎵"
-
-def format_time(seconds: int) -> str:
-    if seconds is None:
-        return "--:--"
-    m, s = divmod(int(seconds), 60)
-    return f"{m:02d}:{s:02d}"
-
-def make_seek_bar(start_time: datetime.datetime, duration: int) -> str:
-    if not start_time or not duration:
-        return ""
-    elapsed = (datetime.datetime.now() - start_time).total_seconds()
-    elapsed = max(0, min(duration, elapsed))
-    total_blocks = 12
-    filled = int((elapsed / duration) * total_blocks) if duration > 0 else 0
-    bar = "▓" * filled + "▒" * (total_blocks - filled)
-    return f"\n{bar} {format_time(elapsed)} / {format_time(duration)}"
-
-# --- Audio Processing Helpers ---
-def ffmpeg_normalize_and_trim(input_path: str, target_i: float = -14.0, tp: float = -1.5, lra: float = 11.0) -> bool:
-    """
-    Trim leading/trailing silence and normalize loudness using FFmpeg's loudnorm and silenceremove.
-    Produces a temporary file and replaces the original if successful.
-    Returns True on success.
-    """
-    try:
-        tmp_path = input_path + ".processing.mp3"
-        # The filter first trims silence, then applies loudnorm.
-        # silenceremove params: start_periods=1:start_threshold=-50dB:start_silence=0.1
-        ffmpeg_cmd = [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-            "-i", input_path,
-            "-af",
-            f"silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.2,areverse,silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.2,areverse,loudnorm=I={target_i}:TP={tp}:LRA={lra}",
-            "-ar", "44100",
-            tmp_path
-        ]
-        log.info(f"Running ffmpeg processing: {' '.join(ffmpeg_cmd[:3])} ...")
-        res = subprocess.run(ffmpeg_cmd, check=False)
-        if res.returncode != 0:
-            log.warning(f"ffmpeg processing failed for {input_path} with return code {res.returncode}")
-            # Attempt single-step loudnorm only as fallback (without silenceremove)
-            tmp_path2 = input_path + ".processing2.mp3"
-            ffmpeg_cmd2 = [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-i", input_path,
-                "-af", f"loudnorm=I={target_i}:TP={tp}:LRA={lra}",
-                "-ar", "44100",
-                tmp_path2
-            ]
-            res2 = subprocess.run(ffmpeg_cmd2, check=False)
-            if res2.returncode == 0:
-                os.replace(tmp_path2, input_path)
-                return True
-            else:
-                log.error(f"Fallback ffmpeg loudnorm also failed for {input_path}.")
-                return False
-        # Replace original file atomically
-        os.replace(tmp_path, input_path)
-        log.info(f"Processed audio: {input_path}")
-        return True
-    except Exception as e:
-        log.exception(f"Exception during ffmpeg processing for {input_path}: {e}")
-        return False
-
-# --- Scheduling edits into the edit queue ---
-async def enqueue_edit(coro):
-    """
-    Add a coroutine function (callable returning a coroutine) to the edit queue.
-    The processing background task will call it (await coro()).
-    """
-    global edit_queue
-    if edit_queue is None:
-        log.warning("Edit queue not initialized; running coroutine immediately.")
-        try:
-            await coro()
-        except Exception as e:
-            log.exception(f"Error running edit coro immediately: {e}")
-        return
-    await edit_queue.put(coro)
-
-def enqueue_edit_threadsafe(coro, loop):
-    """
-    Thread-safe helper to enqueue an edit from non-async contexts.
-    """
-    if edit_queue is None:
-        # If no queue, run directly on given loop
-        try:
-            asyncio.run_coroutine_threadsafe(coro(), loop)
-        except Exception as e:
-            log.exception(f"Failed to run edit coro thread-safe: {e}")
-    else:
-        try:
-            asyncio.run_coroutine_threadsafe(edit_queue.put(coro), loop)
-        except Exception as e:
-            log.exception(f"Failed to enqueue edit thread-safe: {e}")
-
-# --- Playback Controls UI (persistent view) ---
-class PlaybackControls(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.primary, custom_id="playback_skip")
-    async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        voice_client = interaction.guild.voice_client
-        if not voice_client or not (voice_client.is_playing() or voice_client.is_paused()):
-            await interaction.response.send_message("Nothing is currently playing.", ephemeral=True)
-            return
-
-        global g_manual_stop
-        g_manual_stop = True
-        voice_client.stop()
-        await interaction.response.send_message("⏭️ Skipped.", ephemeral=True)
-
-        if g_autoplay_enabled:
-            await play_next_song(interaction.guild)
-
-    @discord.ui.button(label="⏹️ Stop", style=discord.ButtonStyle.danger, custom_id="playback_stop")
-    async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        global g_autoplay_enabled, g_manual_stop
-        g_autoplay_enabled = False
-        voice_client = interaction.guild.voice_client
-        if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
-            g_manual_stop = True
-            voice_client.stop()
-            await interaction.response.send_message("⏹️ Playback stopped and autoplay disabled.", ephemeral=True)
-        else:
-            await interaction.response.send_message("Nothing is currently playing.", ephemeral=True)
-        await enqueue_edit(update_status_message)
-
-    @discord.ui.button(label="🔁 Autoplay: OFF", style=discord.ButtonStyle.secondary, custom_id="playback_autoplay")
-    async def autoplay_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        global g_autoplay_enabled, autoplay_state
-        g_autoplay_enabled = not g_autoplay_enabled
-        autoplay_state['autoplay_enabled'] = g_autoplay_enabled
-        # persist autoplay state
-        try:
-            with open(AUTOPLAY_STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(autoplay_state, f)
-        except Exception as e:
-            log.warning(f"Failed to persist autoplay state: {e}")
-
-        button.label = f"🔁 Autoplay: {'ON' if g_autoplay_enabled else 'OFF'}"
-        button.style = discord.ButtonStyle.success if g_autoplay_enabled else discord.ButtonStyle.secondary
-
-        await interaction.response.send_message(f"🔁 Autoplay is now **{'ON' if g_autoplay_enabled else 'OFF'}**.", ephemeral=True)
-
-        await enqueue_edit(update_status_message)
-
-        if g_autoplay_enabled:
-            vc = interaction.guild.voice_client
-            if vc and not vc.is_playing():
-                await play_next_song(interaction.guild)
-
-# instantiate a single view used for the status message
-playback_controls: PlaybackControls | None = None
-
-async def update_status_message():
-    """
-    Edits the global status message with the current song info or an idle state,
-    and attaches the playback control view. Buttons are dynamically enabled/disabled
-    depending on whether they are usable.
-
-    This function is intended to be scheduled via the edit queue, not called directly
-    many times per second.
-    """
-    global g_status_message, g_last_sync_time, playback_controls, g_last_edit_time
-    if not g_status_message:
-        return
-
-    now = time.time()
-    # small additional guard vs extremely tight edits (but edit queue should manage frequency)
-    if now - g_last_edit_time < 1:
-        return
-    g_last_edit_time = now
-
-    timestamp_str = ""
-    if g_last_sync_time:
-        timestamp = int(g_last_sync_time.timestamp())
-        timestamp_str = f"\n\n*Last Synced: <t:{timestamp}:R>*"
-
-    guild = bot.guilds[0] if bot.guilds else None
-    voice_client = guild.voice_client if guild else None
-    playing_or_paused = bool(voice_client and (voice_client.is_playing() or voice_client.is_paused()))
-
-    if g_currently_playing_info:
-        try:
-            await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=g_currently_playing_info.get('name', '')[:128]))
-        except Exception:
-            pass
-
-        desc = f"**{g_currently_playing_info.get('name','Unknown')}**\nby {g_currently_playing_info.get('artist','Unknown')}"
-        added_name = g_currently_playing_info.get("added_by_name")
-        added_url = g_currently_playing_info.get("added_by_url")
-        if added_name and added_url:
-            desc += f"\n*Added by [{added_name}]({added_url})*"
-        elif g_currently_playing_info.get("added_by"):
-            desc += f"\n*Added by {g_currently_playing_info.get('added_by')}*"
-
-        desc += make_seek_bar(
-            g_currently_playing_info.get("start_time"),
-            g_currently_playing_info.get("duration")
-        )
-
-        desc += timestamp_str
-        embed = discord.Embed(
-            title=f"{get_emoji('spinningcd')} Now Playing",
-            description=desc,
-            color=discord.Color.green()
-        )
-        art_url = g_currently_playing_info.get('art_url')
-        if art_url:
-            embed.set_thumbnail(url=art_url)
-    else:
-        try:
-            await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="your playlist"))
-        except Exception:
-            pass
-        embed = discord.Embed(
-            title="Playback Paused",
-            description=f"Ready to play music. Use `/play` to start.{timestamp_str}",
-            color=discord.Color.greyple()
-        )
-
-    embed.set_footer(text="Hikari Melody")
-
-    # Update playback_controls buttons: label, style, and disabled state.
-    for child in playback_controls.children:
-        if isinstance(child, discord.ui.Button):
-            if child.custom_id == "playback_autoplay":
-                child.label = f"🔁 Autoplay: {'ON' if g_autoplay_enabled else 'OFF'}"
-                child.style = discord.ButtonStyle.success if g_autoplay_enabled else discord.ButtonStyle.secondary
-                child.disabled = False
-            elif child.custom_id == "playback_skip":
-                child.disabled = not playing_or_paused
-            elif child.custom_id == "playback_stop":
-                child.disabled = not playing_or_paused
-
-    try:
-        await g_status_message.edit(content=None, embed=embed, view=playback_controls)
-    except discord.NotFound:
-        log.warning("Status message not found, will recreate on next startup.")
-        g_status_message = None
-    except Exception as e:
-        log.exception(f"Failed editing status message: {e}")
-
-def update_now_playing(info, loop):
-    """
-    Update the global playing info and enqueue a status update in a thread-safe way.
-    Pass the bot loop when calling from non-async contexts.
-    """
-    global g_currently_playing_info, autoplay_state
-    g_currently_playing_info = info or {}
-    autoplay_state['last_played'] = g_currently_playing_info.get('path')
-    try:
-        with open(AUTOPLAY_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(autoplay_state, f)
-    except Exception as e:
-        log.debug(f"Failed to persist autoplay last_played: {e}")
-
-    # Enqueue update_status_message to run via edit queue, thread-safe
-    enqueue_edit_threadsafe(update_status_message, loop)
-
-async def resolve_added_by(user_id: str):
-    """
-    Resolve a Spotify user ID into (display_name, profile_url) and cache it.
-    Returns (name, url) or (user_id, profile_url) fallback.
-    """
-    global g_spotify_user_cache, sp
-    if not sp or not user_id:
-        return None, None
-    if user_id in g_spotify_user_cache:
-        return g_spotify_user_cache[user_id]
-    loop = asyncio.get_event_loop()
-    try:
-        user_info = await loop.run_in_executor(None, lambda: sp.user(user_id))
-        name = user_info.get("display_name") or user_info.get("id") or user_id
-        url = user_info.get("external_urls", {}).get("spotify", f"https://open.spotify.com/user/{user_id}")
-    except Exception:
-        name = user_id
-        url = f"https://open.spotify.com/user/{user_id}"
-    g_spotify_user_cache[user_id] = (name, url)
-    return name, url
-
-# --- Core Logic: Sync with improved parallel downloads and post-processing ---
-async def sync_playlist(channel=None):
-    """
-    Sync Spotify playlist with local songs directory.
-    - Uses a staging temp dir
-    - Downloads missing tracks in parallel
-    - After each download, trims & normalizes audio
-    - All filesystem edits (rename/delete) are queued via edit_queue and applied by the edit processor
-    """
-    global g_spotify_tracks, g_last_sync_time, download_executor
-
-    if g_currently_playing_info:
-        log.info("Playback in progress. Sync postponed to avoid file conflicts.")
-        if channel:
-            await channel.send("🎧 A song is playing. Sync will automatically run later.")
-        return
-    if not sp:
-        if channel:
-            await channel.send("❌ Spotify connection is down. Cannot sync.")
-        log.warning("Spotify client not available for sync.")
-        return
-
-    # Prepare executors
-    if download_executor is None:
-        # Limit number of threads to a safe number
-        download_executor = ThreadPoolExecutor(max_workers=4)
-
-    try:
-        if channel:
-            await channel.send("🔄 Starting intelligent background sync...")
-        log.info("Starting playlist sync...")
-
-        # Fetch all playlist tracks
-        playlist_id = PLAYLIST_URL.split('playlist/')[1].split('?')[0]
-        spotify_tracks_raw = []
-        results = sp.playlist_tracks(playlist_id)
-        spotify_tracks_raw.extend(results['items'])
-        while results['next']:
-            results = sp.next(results)
-            spotify_tracks_raw.extend(results['items'])
-        g_spotify_tracks = spotify_tracks_raw
-
-        # Build ideal filenames
-        content_names = [sanitize_filename(item['track']['name']) + ".mp3" for item in g_spotify_tracks if item.get('track')]
-        name_counts = Counter(content_names)
-        duplicate_content_names = {name for name, count in name_counts.items() if count > 1}
-
-        ideal_state_unique = {
-            f"{i+1} - {sanitize_filename(item['track']['name'])}.mp3": sanitize_filename(item['track']['name']) + ".mp3"
-            for i, item in enumerate(g_spotify_tracks)
-            if item.get('track') and (sanitize_filename(item['track']['name']) + ".mp3") not in duplicate_content_names
+def extract_track_payload(track: wavelink.Playable) -> dict:
+    """Safely extracts or reconstructs the Lavalink track payload for JSON serialization."""
+    for attr in ['raw_data', 'data', 'payload', '_raw_data', '_raw']:
+        val = getattr(track, attr, None)
+        if val and isinstance(val, dict):
+            return val
+            
+    # Fallback Reconstruction
+    return {
+        "encoded": getattr(track, 'encoded', ""),
+        "info": {
+            "identifier": getattr(track, 'identifier', ""),
+            "isSeekable": getattr(track, 'is_seekable', getattr(track, 'isSeekable', True)),
+            "author": getattr(track, 'author', ""),
+            "length": getattr(track, 'length', 0),
+            "isStream": getattr(track, 'is_stream', getattr(track, 'isStream', False)),
+            "position": getattr(track, 'position', 0),
+            "title": getattr(track, 'title', ""),
+            "uri": getattr(track, 'uri', ""),
+            "sourceName": getattr(track, 'source', "youtube"),
+            "artworkUrl": getattr(track, 'artwork', "")
         }
-
-        # Create temp staging directory
-        if os.path.exists(TEMP_DIR):
-            shutil.rmtree(TEMP_DIR)
-        if os.path.exists(SONGS_DIR):
-            shutil.copytree(SONGS_DIR, TEMP_DIR)
-        else:
-            os.makedirs(TEMP_DIR, exist_ok=True)
-
-        # Map local filenames that are "index - name.mp3" -> content name
-        local_state_unique = {
-            filename: filename.split(" - ", 1)[1]
-            for filename in os.listdir(TEMP_DIR)
-            if " - " in filename and filename.split(" - ", 1)[1] not in duplicate_content_names
-        }
-
-        # Deleted & renamed actions queued so they execute via edit processor
-        deleted_count, renamed_count, downloaded_count = 0, 0, 0
-
-        # Queue deletes for files not in ideal playlist
-        for full_filename, content_name in local_state_unique.items():
-            if content_name not in ideal_state_unique.values():
-                file_path = os.path.join(TEMP_DIR, full_filename)
-                async def _del(p=file_path):
-                    try:
-                        os.remove(p)
-                        log.info(f"Deleted: {p}")
-                    except FileNotFoundError:
-                        pass
-                    except Exception as e:
-                        log.exception(f"Failed to delete {p}: {e}")
-                await enqueue_edit(_del)
-                deleted_count += 1
-
-        # Queue renames for files that need reindexing
-        for ideal_full, ideal_content in ideal_state_unique.items():
-            for local_full, local_content in local_state_unique.items():
-                if ideal_content == local_content and ideal_full != local_full:
-                    src = os.path.join(TEMP_DIR, local_full)
-                    dst = os.path.join(TEMP_DIR, ideal_full)
-                    async def _rename(s=src, d=dst):
-                        try:
-                            os.rename(s, d)
-                            log.info(f"Renamed {s} -> {d}")
-                        except FileNotFoundError:
-                            pass
-                        except Exception as e:
-                            log.exception(f"Failed rename {s} -> {d}: {e}")
-                    await enqueue_edit(_rename)
-                    renamed_count += 1
-
-        # Remove duplicates: files in temp that are duplicate content names but not part of ideal list
-        ideal_filenames_duplicates = [
-            f"{i+1} - {sanitize_filename(item['track']['name'])}.mp3"
-            for i, item in enumerate(g_spotify_tracks)
-            if item.get('track') and (sanitize_filename(item['track']['name']) + ".mp3") in duplicate_content_names
-        ]
-        temp_files = os.listdir(TEMP_DIR)
-        for temp_file in temp_files:
-            if " - " in temp_file and temp_file.split(" - ", 1)[1] in duplicate_content_names:
-                if temp_file not in ideal_filenames_duplicates:
-                    file_path = os.path.join(TEMP_DIR, temp_file)
-                    async def _deldup(p=file_path):
-                        try:
-                            os.remove(p)
-                            log.info(f"Deleted duplicate: {p}")
-                        except FileNotFoundError:
-                            pass
-                        except Exception as e:
-                            log.exception(f"Failed to delete duplicate {p}: {e}")
-                    await enqueue_edit(_deldup)
-                    deleted_count += 1
-
-        # Determine missing files to download
-        current_temp_files = os.listdir(TEMP_DIR)
-        missing_tracks = []
-        for i, track_item in enumerate(g_spotify_tracks):
-            track_info = track_item.get('track')
-            if not track_info:
-                continue
-            ideal_filename = f"{i+1} - {sanitize_filename(track_info['name'])}.mp3"
-            if ideal_filename not in current_temp_files:
-                missing_tracks.append((i, track_item, ideal_filename))
-
-        # Download missing tracks in parallel using executor
-        if missing_tracks:
-            log.info(f"Downloading {len(missing_tracks)} missing tracks (parallel)...")
-            loop = asyncio.get_event_loop()
-            download_futures = []
-
-            def _download_and_process(search_query, filepath):
-                """
-                Blocking function to download via yt_dlp and post-process audio.
-                Returns True on success.
-                """
-                try:
-                    # Ensure parent directory exists
-                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-                    ydl_opts = {
-                        'format': 'bestaudio/best',
-                        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                        'outtmpl': filepath + '.%(ext)s',
-                        'default_search': 'ytsearch1',
-                        'quiet': True,
-                        'no_warnings': True,
-                        'sponsorblock_remove': ['sponsor', 'selfpromo', 'intro', 'outro', 'music_offtopic']
-                    }
-                    log.info(f"Downloading '{search_query}' -> {filepath}")
-                    yt_dlp.YoutubeDL(ydl_opts).download([search_query])
-                    # Post-process: trim silence & normalize
-                    success = ffmpeg_normalize_and_trim(filepath)
-                    if not success:
-                        log.warning(f"Post-processing failed for {filepath}")
-                    return True
-                except Exception as e:
-                    log.exception(f"Download failed for {search_query}: {e}")
-                    return False
-
-            for (idx, track_item, ideal_filename) in missing_tracks:
-                track_info = track_item.get('track')
-                track_name, artist_name = track_info['name'], track_info['artists'][0]['name']
-                search_query = f"{track_name} by {artist_name} audio"
-                filepath_base = os.path.splitext(os.path.join(TEMP_DIR, ideal_filename))[0]
-                filepath = filepath_base + '.mp3'
-                # schedule download in executor
-                fut = loop.run_in_executor(download_executor, _download_and_process, search_query, filepath)
-                download_futures.append(fut)
-
-            # Wait for all downloads to complete
-            results = await asyncio.gather(*download_futures, return_exceptions=True)
-            for r in results:
-                if isinstance(r, Exception):
-                    log.exception(f"Exception in download: {r}")
-                elif r:
-                    downloaded_count += 1
-
-        # After queueing deletes/renames and finishing downloads, replace old songs dir atomically.
-        # To avoid race conditions, we wait a short moment for the edit queue to flush pending filesystem ops.
-        # We'll enqueue a final step that swaps directories (this will run as an edit).
-        async def _swap_dirs():
-            try:
-                if os.path.exists(SONGS_DIR):
-                    shutil.rmtree(SONGS_DIR)
-                os.rename(TEMP_DIR, SONGS_DIR)
-                log.info("Swapped in new songs directory.")
-            except Exception as e:
-                log.exception(f"Failed to swap songs directory: {e}")
-        await enqueue_edit(_swap_dirs)
-
-        g_last_sync_time = datetime.datetime.now()
-        # schedule status update via edit queue
-        await enqueue_edit(update_status_message)
-
-        summary = f"✅ Sync queued! Downloaded: **{downloaded_count}**, Renamed (queued): **{renamed_count}**, Deleted (queued): **{deleted_count}**."
-        if channel:
-            await channel.send(summary)
-        log.info(f"Sync summary (queued): {summary}")
-    except Exception as e:
-        log.exception(f"FATAL ERROR during playlist sync: {e}")
-        if channel:
-            await channel.send(f"❌ A fatal error occurred during background sync. Check console logs.")
-    finally:
-        # If TEMP_DIR still exists (because swap_dirs hasn't happened yet), we'll leave it for the edit processor to handle.
-        pass
-
-# --- Autoplay & Playback ---
-async def play_next_song(guild: discord.Guild):
-    """
-    Plays the next song (random) in the given guild if autoplay is enabled.
-    Called by the after callback of FFmpeg playback and from the autoplay toggle.
-    """
-    global g_manual_stop, g_autoplay_enabled, g_recently_played
-
-    if g_manual_stop:
-        g_manual_stop = False
-        log.info("Manual stop flagged; skipping autoplay for this transition.")
-        return
-
-    # Clear now-playing UI promptly
-    update_now_playing(None, bot.loop)
-
-    if not g_autoplay_enabled:
-        log.info("Autoplay is disabled; not continuing playback.")
-        return
-
-    voice_client = guild.voice_client
-    if not voice_client or not voice_client.is_connected():
-        g_autoplay_enabled = False
-        autoplay_state['autoplay_enabled'] = False
-        try:
-            with open(AUTOPLAY_STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(autoplay_state, f)
-        except Exception:
-            pass
-        log.info("Bot is not connected in guild; disabling autoplay.")
-        await enqueue_edit(update_status_message)
-        return
-
-    try:
-        if not os.path.exists(SONGS_DIR):
-            log.info("No songs directory for autoplay.")
-            g_autoplay_enabled = False
-            autoplay_state['autoplay_enabled'] = False
-            await enqueue_edit(update_status_message)
-            return
-        song_list = [f for f in os.listdir(SONGS_DIR) if f.lower().endswith('.mp3')]
-        if not song_list:
-            log.info("No songs found for autoplay.")
-            g_autoplay_enabled = False
-            autoplay_state['autoplay_enabled'] = False
-            await enqueue_edit(update_status_message)
-            return
-
-        # Pick a random song not in recently played (if possible)
-        found_song_filename = None
-        attempts = 0
-        while attempts < 50:
-            candidate = random.choice(song_list)
-            if candidate not in g_recently_played or len(set(song_list)) <= len(g_recently_played):
-                found_song_filename = candidate
-                break
-            attempts += 1
-
-        if not found_song_filename:
-            found_song_filename = random.choice(song_list)
-
-        g_recently_played.append(found_song_filename)
-
-        # get metadata safely
-        try:
-            song_number = int(found_song_filename.split(' - ')[0])
-            track_item = g_spotify_tracks[song_number - 1]
-            track_info = track_item['track']
-            raw_added_by = track_item.get("added_by", {}).get("id") if track_item.get("added_by") else None
-            added_by_name, added_by_url = await resolve_added_by(raw_added_by) if raw_added_by else (None, None)
-            duration = int(track_info['duration_ms'] / 1000) if track_info and track_info.get('duration_ms') else None
-        except Exception:
-            track_info = None
-            song_number = None
-            added_by_name, added_by_url, duration = None, None, None
-
-        song_info = {
-            'path': os.path.join(SONGS_DIR, found_song_filename),
-            'name': (track_info['name'] if track_info else os.path.splitext(found_song_filename)[0]),
-            'artist': (track_info['artists'][0]['name'] if track_info else 'Unknown'),
-            'art_url': (track_info['album']['images'][0]['url'] if (track_info and track_info.get('album') and track_info['album'].get('images')) else None),
-            'added_by_name': added_by_name,
-            'added_by_url': added_by_url,
-            'duration': duration,
-            'start_time': datetime.datetime.now()
-        }
-
-        await play_file(guild, song_info)
-    except Exception as e:
-        log.exception(f"Error during autoplay: {e}")
-
-async def play_file(guild: discord.Guild, song_info: dict):
-    """
-    Central helper to start playback of a given song_info dict.
-    """
-    voice_client = guild.voice_client
-    if not voice_client or not voice_client.is_connected():
-        log.info(f"Not connected to voice channel in guild {guild.id}; cannot play.")
-        return
-
-    update_now_playing(song_info, bot.loop)
-
-    path = song_info.get('path')
-    if not path or not os.path.exists(path):
-        log.warning(f"Requested file doesn't exist: {path}")
-        update_now_playing(None, bot.loop)
-        return
-
-    def _after(err):
-        if err:
-            log.exception(f"Playback error: {err}")
-        asyncio.run_coroutine_threadsafe(play_next_song(guild), bot.loop)
-
-    try:
-        # Use FFmpegPCMAudio; if you want to apply global volume multiplier you can add before_options or filter here.
-        voice_client.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=path), after=_after)
-        log.info(f"Started playback: {path}")
-    except Exception as e:
-        log.exception(f"Error starting playback: {e}")
-        update_now_playing(None, bot.loop)
-
-# --- Autocomplete & Slash Commands ---
-async def play_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-    choices = []
-    try:
-        sorted_files = sorted(
-            [f for f in os.listdir(SONGS_DIR) if f.lower().endswith('.mp3')],
-            key=lambda x: int(x.split(' - ')[0]) if ' - ' in x else 0
-        )
-    except Exception:
-        return []
-    for filename in sorted_files:
-        if current.lower() in filename.lower():
-            choices.append(app_commands.Choice(name=filename.replace('.mp3', ''), value=filename))
-    return choices[:25]
-
-@bot.tree.command(name="play", description="Plays a song from the playlist.")
-@app_commands.autocomplete(song=play_autocomplete)
-async def play(interaction: discord.Interaction, song: str):
-    global g_manual_stop, g_recently_played
-    voice_client = interaction.guild.voice_client
-    if not voice_client or not voice_client.is_connected():
-        return await interaction.response.send_message("I'm not in a voice channel!", ephemeral=True)
-
-    if voice_client.is_playing() or voice_client.is_paused():
-        g_manual_stop = True
-        voice_client.stop()
-
-    found_song_filename = song
-    if not found_song_filename:
-        return await interaction.response.send_message("You must select a song.", ephemeral=True)
-
-    if not os.path.exists(SONGS_DIR):
-        return await interaction.response.send_message("No songs are available. Please run `/sync` first.", ephemeral=True)
-
-    if not os.path.exists(os.path.join(SONGS_DIR, found_song_filename)):
-        return await interaction.response.send_message("Could not find that song file. Playlist might be syncing.", ephemeral=True)
-
-    try:
-        song_number = int(found_song_filename.split(' - ')[0])
-        track_item = g_spotify_tracks[song_number - 1]
-        track_info = track_item['track']
-        raw_added_by = track_item.get("added_by", {}).get("id") if track_item.get("added_by") else None
-        added_by_name, added_by_url = await resolve_added_by(raw_added_by) if raw_added_by else (None, None)
-        duration = int(track_info['duration_ms'] / 1000) if track_info and track_info.get('duration_ms') else None
-    except Exception:
-        track_info = None
-        added_by_name, added_by_url, duration = None, None, None
-
-    song_info = {
-        'path': os.path.join(SONGS_DIR, found_song_filename),
-        'name': (track_info['name'] if track_info else os.path.splitext(found_song_filename)[0]),
-        'artist': (track_info['artists'][0]['name'] if track_info else 'Unknown'),
-        'art_url': (track_info['album']['images'][0]['url'] if (track_info and track_info.get('album') and track_info['album'].get('images')) else None),
-        'added_by_name': added_by_name,
-        'added_by_url': added_by_url,
-        'duration': duration,
-        'start_time': datetime.datetime.now()
     }
 
-    g_recently_played.append(found_song_filename)
-
-    await play_file(interaction.guild, song_info)
-    await interaction.response.send_message(f"🎵 Now playing: **{song_info['name']}**", ephemeral=True)
-
-@bot.tree.command(name="set", description="Moves the bot to your current voice channel.")
-async def set_channel(interaction: discord.Interaction):
-    if interaction.user.voice and interaction.user.voice.channel:
-        user_channel = interaction.user.voice.channel
-        if interaction.guild.voice_client:
-            await interaction.guild.voice_client.move_to(user_channel)
+def chunk_text(text: str, max_len: int = 1500) -> List[str]:
+    """Splits long text cleanly by natural line breaks for Discord embeds."""
+    pages = []
+    lines = text.split('\n')
+    current_page = ""
+    for line in lines:
+        if len(current_page) + len(line) + 1 > max_len:
+            if current_page: pages.append(current_page.strip())
+            current_page = line + "\n"
         else:
-            await user_channel.connect()
-        await interaction.response.send_message(f"✅ Joined/Moved to **{user_channel.name}**.", ephemeral=True)
-    else:
-        await interaction.response.send_message("You need to be in a voice channel to use this command.", ephemeral=True)
+            current_page += line + "\n"
+    if current_page: pages.append(current_page.strip())
+    return pages if pages else ["No content available."]
 
-@bot.tree.command(name="sync", description="Manually triggers a playlist sync.")
-async def sync(interaction: discord.Interaction):
-    await interaction.response.send_message("Manual sync initiated. See console for progress.", ephemeral=True)
-    asyncio.create_task(sync_playlist(interaction.channel))
 
-@bot.tree.command(name="autoplay", description="Toggles random automated playback of the playlist.")
-async def autoplay(interaction: discord.Interaction):
-    global g_autoplay_enabled, autoplay_state
-    g_autoplay_enabled = not g_autoplay_enabled
-    autoplay_state['autoplay_enabled'] = g_autoplay_enabled
-    try:
-        with open(AUTOPLAY_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(autoplay_state, f)
-    except Exception as e:
-        log.warning(f"Failed to persist autoplay state: {e}")
+# ====================================
+# ICON CONFIGURATION
+# ====================================
+class Icons:
+    """Centralized dictionary for all bot emojis."""
+    MUSIC = "<:music_white:1523496640697340046>"
+    SKIP = "<:skipforward_white:1523496676978069625>"
+    STOP = "<:square_white:1523496680639565904>"
+    AUTOPLAY = "<:infinity_white:1523496636268150824>"
+    SHUFFLE = "<:shuffle_white:1523496667469578431>"
+    PLAY = "<:play_white:1523496655893303376>"
+    ADDED = "<:savecheck_white:1523496664529371290>"
+    SUCCESS = "<:check_white:1523496625715281930>"
+    ERROR = "<:trianglealert_white:1523496683705597973>"
+    EMPTY = "<:ban_white:1523496620866666557>"
+    USER = "<:user_white:1523496689200009368>"
+    PLUS = "<:plus_white:1523496659118456932>"
+    PREV = "<:play_flipped_white:1523496654689406997>"
+    NEXT = "<:play_white:1523496655893303376>"
+    FIRST = "<:fastforward_flipped_white:1523496631658479749>"
+    LAST = "<:fastforward_white:1523496632602071200>"
+    CLOSE = "<:x_white:1523496709769003191>"
+    TOOLS = "<:wrench_white:1523496706321285120>"
+    BAR_START = "<:SeekBar_SolidStart:1523497100086739097>"
+    BAR_END = "<:SeekBar_SolidDarkEnd:1523497099575037952>"
+    BAR_FILLED = "<:SeekBar_Solid:1523497097469493250>"
+    BAR_EMPTY = "<:SeekBar_SolidDark:1523497098702749827>"
+    BAR_PLAYHEAD = "<:SeekBar_PlayHead:1523497096097824879>"
+    CD = "<a:cd:1523507325145448479>"
+    REPEAT = "<:repeat_white:1524533301006696498>"
+    REPEAT_OFF = "<:repeatoff_white:1524533308170567750>"
+    REPEAT_ONE = "<:repeat1_white:1524533304404086894>" 
 
-    status = "ON" if g_autoplay_enabled else "OFF"
-    await interaction.response.send_message(f"🔀 Autoplay is now **{status}**.", ephemeral=True)
-    voice_client = interaction.guild.voice_client
-    if g_autoplay_enabled:
-        if not (voice_client and voice_client.is_playing()):
-            await play_next_song(interaction.guild)
-    await enqueue_edit(update_status_message)
 
-@bot.tree.command(name="stop", description="Stops the current song and disables autoplay.")
-async def stop(interaction: discord.Interaction):
-    global g_autoplay_enabled, g_manual_stop, autoplay_state
-    g_autoplay_enabled = False
-    autoplay_state['autoplay_enabled'] = False
-    try:
-        with open(AUTOPLAY_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(autoplay_state, f)
-    except Exception:
-        pass
-    voice_client = interaction.guild.voice_client
-    if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
-        g_manual_stop = True
-        voice_client.stop()
-        await interaction.response.send_message("⏹️ Playback stopped and autoplay disabled.", ephemeral=True)
-    else:
-        await interaction.response.send_message("Nothing is currently playing.", ephemeral=True)
-    await enqueue_edit(update_status_message)
+# ====================================
+# DATA MODELS & PERSISTENCE
+# ====================================
+@dataclass
+class TrackRequest:
+    """Wraps a Wavelink track with the user who requested it."""
+    track: wavelink.Playable
+    requester: Union[discord.Member, discord.User]
+    uid: str = field(default_factory=generate_uid)
 
-@bot.tree.command(name="skip", description="Skips the current song and rerolls if autoplay is on.")
-async def skip(interaction: discord.Interaction):
-    voice_client = interaction.guild.voice_client
-    if not voice_client or not (voice_client.is_playing() or voice_client.is_paused()):
-        return await interaction.response.send_message("Nothing is currently playing.", ephemeral=True)
 
-    global g_manual_stop
-    g_manual_stop = True
-    voice_client.stop()
-    await interaction.response.send_message("⏭️ Skipped the current song.", ephemeral=True)
-    if g_autoplay_enabled:
-        await play_next_song(interaction.guild)
+class PersistenceManager:
+    def __init__(self):
+        self.base_dir = "servers"
+        os.makedirs(self.base_dir, exist_ok=True)
 
-@bot.tree.command(name="lyrics", description="Fetches lyrics for the currently playing song.")
-async def lyrics(interaction: discord.Interaction):
-    if not g_currently_playing_info:
-        return await interaction.response.send_message("❌ No song is currently playing.", ephemeral=True)
+    def _get_dir(self, guild_id: int) -> str:
+        path = os.path.join(self.base_dir, str(guild_id))
+        os.makedirs(path, exist_ok=True)
+        return path
 
-    if not genius:
-        return await interaction.response.send_message("❌ Genius API not configured. Please set GENIUS_API_TOKEN in .env.", ephemeral=True)
+    def load_settings(self, guild_id: int) -> dict:
+        path = os.path.join(self._get_dir(guild_id), "settings.json")
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {"prefix": os.getenv('BOT_PREFIX', 'h!'), "dj_lockdown": False, "vote_percentage": 75, "roles": {}}
 
-    song_name = g_currently_playing_info.get("name")
-    artist_name = g_currently_playing_info.get("artist")
-    safe_name = sanitize_filename(f"{song_name} - {artist_name}")
-    cache_path = os.path.join(LYRICS_CACHE_DIR, safe_name + ".txt")
+    def save_settings(self, guild_id: int, data: dict):
+        path = os.path.join(self._get_dir(guild_id), "settings.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
 
-    await interaction.response.defer(ephemeral=True)
+    def load_persistence(self, guild_id: int) -> dict:
+        path = os.path.join(self._get_dir(guild_id), "persistence.json")
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {}
 
-    # Return cached lyrics if available
-    if os.path.exists(cache_path):
+    def save_persistence(self, guild_id: int, data: dict):
+        path = os.path.join(self._get_dir(guild_id), "persistence.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+
+
+# ====================================
+# QUEUE SYSTEM
+# ====================================
+class QueueManager:
+    def __init__(self, bot: "MusicBot", guild_id: int):
+        self.bot = bot
+        self.guild_id = guild_id
+        self._queue: deque[TrackRequest] = deque()
+        self._lock = asyncio.Lock()
+        self._logger = logging.getLogger(f"QueueManager-{guild_id}")
+
+    def _save(self):
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                lyrics_text = f.read()
-            chunks = [lyrics_text[i:i+1900] for i in range(0, len(lyrics_text), 1900)]
-            for i, chunk in enumerate(chunks):
-                header = f"🎤 **Lyrics for {song_name} — {artist_name}** (part {i+1}/{len(chunks)})\n\n" if i == 0 else ""
-                await interaction.followup.send(header + chunk, ephemeral=True)
-            return
+            p_data = self.bot.persistence.load_persistence(self.guild_id)
+            q_list = []
+            
+            for req in self._queue:
+                t_data = extract_track_payload(req.track)
+                q_list.append({
+                    "data": t_data,
+                    "uri": req.track.uri or req.track.title,
+                    "requester_id": getattr(req.requester, "id", None),
+                    "uid": req.uid
+                })
+                
+            p_data["queue"] = q_list
+            self.bot.persistence.save_persistence(self.guild_id, p_data)
         except Exception as e:
-            log.warning(f"Failed to read lyrics cache {cache_path}: {e}")
+            self._logger.error(f"Failed to sync queue to JSON: {e}")
 
-    try:
-        # Use executor for blocking Genius call
-        loop = asyncio.get_event_loop()
-        song = await loop.run_in_executor(None, lambda: genius.search_song(song_name, artist_name))
-        if not song or not song.lyrics:
-            return await interaction.followup.send("❌ Lyrics not found.", ephemeral=True)
+    async def enqueue(self, track_req: TrackRequest):
+        async with self._lock:
+            self._queue.append(track_req)
+            self._logger.info(f"Track added: {track_req.track.title}")
+            await self.on_track_added(track_req)
 
-        lyrics_text = song.lyrics
-        lyrics_text = re.sub(r'(\d*Embed.*)', '', lyrics_text).strip()
+    async def add_to_front(self, track_req: TrackRequest):
+        """Pushes an override track to index 0 of the deque (PlayNext)."""
+        async with self._lock:
+            self._queue.appendleft(track_req)
+            self._logger.info(f"Track forced to front: {track_req.track.title}")
+            await self.on_track_added(track_req)
 
-        # Cache lyrics to disk for future
+    async def dequeue(self) -> Optional[TrackRequest]:
+        async with self._lock:
+            if not self._queue:
+                return None
+            track_req = self._queue.popleft()
+            self._logger.info(f"Track dequeued: {track_req.track.title}")
+            await self.on_track_removed(track_req)
+            return track_req
+
+    async def peek(self) -> Optional[TrackRequest]:
+        async with self._lock:
+            return self._queue[0] if self._queue else None
+
+    async def clear(self):
+        async with self._lock:
+            self._queue.clear()
+            self._logger.info("Queue cleared.")
+            await self.on_queue_cleared()
+
+    async def remove_by_uid(self, uid: str) -> Optional[TrackRequest]:
+        async with self._lock:
+            found = next((req for req in self._queue if req.uid.upper() == uid.upper()), None)
+            if found:
+                self._queue.remove(found)
+                await self.on_track_removed(found)
+                return found
+            return None
+
+    async def get_all(self) -> List[TrackRequest]:
+        async with self._lock:
+            return list(self._queue)
+
+    async def shuffle(self):
+        async with self._lock:
+            if len(self._queue) > 1:
+                temp_list = list(self._queue)
+                random.shuffle(temp_list)
+                self._queue = deque(temp_list)
+            self._logger.info("Queue shuffled.")
+            await self.on_shuffle_enabled()
+
+    @property
+    def is_empty(self) -> bool:
+        return len(self._queue) == 0
+
+    async def on_track_added(self, track_req: TrackRequest): self._save()
+    async def on_track_removed(self, track_req: TrackRequest): self._save()
+    async def on_queue_cleared(self): self._save()
+    async def on_shuffle_enabled(self): self._save()
+    async def on_shuffle_disabled(self): self._save()
+
+
+# ====================================
+# STATE & EXTERNAL RESOLVERS
+# ====================================
+@dataclass
+class GuildMusicState:
+    guild_id: int
+    bot: "MusicBot"
+    channel_id: Optional[int] = None
+    message_id: Optional[int] = None
+    voice_channel_id: Optional[int] = None
+    status_message: Optional[discord.Message] = None
+    current_track_req: Optional[TrackRequest] = None
+    
+    # Playback Modifiers
+    autoplay_enabled: bool = False
+    shuffle_enabled: bool = False
+    loop_mode: str = "off" # "off", "playlist", "song"
+    
+    is_stopping: bool = False
+    skip_requested: bool = False # Flag to bypass loop when user forces skip
+    
+    # Vote skip memory per track
+    skip_votes: Set[int] = field(default_factory=set)
+    
+    _playback_lock: Optional[asyncio.Lock] = field(default=None, init=False)
+    queue: QueueManager = field(init=False)
+    updater_task: Optional[asyncio.Task] = field(default=None, init=False)
+    
+    # UI Rate Limit Protection
+    last_ui_update: float = 0.0
+    ui_update_pending: bool = False
+
+    @property
+    def playback_lock(self) -> asyncio.Lock:
+        if self._playback_lock is None:
+            self._playback_lock = asyncio.Lock()
+        return self._playback_lock
+
+    def __post_init__(self):
+        self.queue = QueueManager(self.bot, self.guild_id)
+
+    @property
+    def dj_lockdown(self) -> bool:
+        settings = self.bot.persistence.load_settings(self.guild_id)
+        return settings.get("dj_lockdown", False)
+
+
+class SpotifyResolver:
+    def __init__(self, client_id: Optional[str], client_secret: Optional[str]):
+        self.enabled = bool(client_id and client_secret)
+        if self.enabled:
+            auth_manager = SpotifyClientCredentials(client_id=client_id, client_secret=client_secret)
+            self.sp = spotipy.Spotify(auth_manager=auth_manager)
+            logger.info("SpotifyResolver initialized successfully.")
+        else:
+            self.sp = None
+            logger.warning("Spotify API keys missing. Spotify resolution is disabled.")
+
+    def is_spotify_url(self, query: str) -> bool:
+        return "spotify.com" in query or "spotify.link" in query
+
+    def _fetch_track_sync(self, query: str) -> str:
+        if not self.enabled:
+            raise RuntimeError("Spotify API is not configured.")
+        if any(x in query for x in ["/playlist/", "/album/", "/show/", "/episode/", "/artist/"]):
+            raise ValueError("Playlists, albums, and artists are not currently supported via direct link. Please search by name.")
+        if "/track/" not in query:
+            raise ValueError("Invalid or unsupported Spotify link.")
+        track_info = self.sp.track(query)
+        return f"{track_info['name']} {track_info['artists'][0]['name']}"
+
+    async def resolve(self, query: str) -> str:
+        return await asyncio.to_thread(self._fetch_track_sync, query)
+
+class LyricsResolver:
+    """Handles falling back through multiple lyrics providers smoothly."""
+    def __init__(self):
+        self.genius_token = os.getenv('GENIUS_ACCESS_TOKEN')
+
+    async def get_lyrics(self, query: str) -> Optional[tuple[str, str]]:
+        # Step 1: LRCLib (Highly reliable, clean plain text)
+        lyrics = await self._fetch_lrclib(query)
+        if lyrics: return (lyrics, "LRCLib")
+        
+        # Step 2: Musixmatch Fallback Placeholder
+        lyrics = await self._fetch_musixmatch(query)
+        if lyrics: return (lyrics, "Musixmatch")
+        
+        # Step 3: Genius API Fallback
+        if self.genius_token:
+            lyrics = await self._fetch_genius(query)
+            if lyrics: return (lyrics, "Genius")
+            
+        return None
+
+    async def _fetch_lrclib(self, query: str) -> Optional[str]:
         try:
-            with open(cache_path, "w", encoding="utf-8") as f:
-                f.write(lyrics_text)
-            log.info(f"Cached lyrics: {cache_path}")
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://lrclib.net/api/search", params={"q": query}) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data and len(data) > 0:
+                            return data[0].get("plainLyrics")
         except Exception as e:
-            log.warning(f"Failed to write lyrics cache: {e}")
+            logger.error(f"LRCLib fetch failed: {e}")
+        return None
 
-        chunks = [lyrics_text[i:i+1900] for i in range(0, len(lyrics_text), 1900)]
-        for i, chunk in enumerate(chunks):
-            header = f"🎤 **Lyrics for {song_name} — {artist_name}** (part {i+1}/{len(chunks)})\n\n" if i == 0 else ""
-            await interaction.followup.send(header + chunk, ephemeral=True)
-    except Exception as e:
-        log.exception(f"Error fetching lyrics: {e}")
-        await interaction.followup.send("⚠️ Error fetching lyrics. Try again later.", ephemeral=True)
+    async def _fetch_musixmatch(self, query: str) -> Optional[str]:
+        # Fallback stub. Direct scraping is heavily blocked, safely skipped.
+        return None
 
-# --- Background Tasks ---
-@tasks.loop(seconds=15)
-async def refresh_seek_bar():
-    if g_currently_playing_info:
-        await enqueue_edit(update_status_message)
-
-@tasks.loop(minutes=5)
-async def scheduled_sync():
-    await sync_playlist()
-
-async def _edit_queue_processor():
-    """
-    Background coroutine: every 5 seconds, process all queued 'edit' tasks sequentially.
-    This ensures edits (status message edits, filesystem renames/deletes, dir swaps) respect a controlled rate
-    and are applied in a batch every 5 seconds.
-    """
-    global edit_queue
-    while True:
+    async def _fetch_genius(self, query: str) -> Optional[str]:
         try:
-            # Gather all items currently in queue
-            tasks_to_run = []
-            while not edit_queue.empty():
-                coro_callable = await edit_queue.get()
-                tasks_to_run.append(coro_callable)
-            if tasks_to_run:
-                log.info(f"Processing {len(tasks_to_run)} queued edit(s)...")
-            for coro_callable in tasks_to_run:
+            headers = {"Authorization": f"Bearer {self.genius_token}"}
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://api.genius.com/search", params={"q": query}, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        hits = data.get("response", {}).get("hits", [])
+                        if hits:
+                            url = hits[0]["result"]["url"]
+                            async with session.get(url) as page_resp:
+                                if page_resp.status == 200:
+                                    html = await page_resp.text()
+                                    # Locate the specific react container Genius uses for lyrics
+                                    containers = re.findall(r'<div data-lyrics-container="true"[^>]*>(.*?)</div>', html)
+                                    if containers:
+                                        text = "\n".join(containers)
+                                        text = re.sub(r'<br/?>', '\n', text)
+                                        text = re.sub(r'<[^>]+>', '', text)
+                                        return text
+        except Exception as e:
+            logger.error(f"Genius fetch failed: {e}")
+        return None
+
+
+class MusicManager:
+    def __init__(self, bot: "MusicBot"):
+        self.bot = bot
+        self.states: Dict[int, GuildMusicState] = {}
+        
+        client_id = os.getenv('SPOTIPY_CLIENT_ID')
+        client_secret = os.getenv('SPOTIPY_CLIENT_SECRET')
+        self.spotify = SpotifyResolver(client_id, client_secret)
+        self.lyrics = LyricsResolver()
+
+    def get_state(self, guild_id: int) -> GuildMusicState:
+        if guild_id not in self.states:
+            state = GuildMusicState(guild_id=guild_id, bot=self.bot)
+            
+            p_data = self.bot.persistence.load_persistence(guild_id)
+            state.channel_id = p_data.get("channel_id")
+            state.message_id = p_data.get("message_id")
+            state.voice_channel_id = p_data.get("voice_channel_id")
+            
+            self.states[guild_id] = state
+        return self.states[guild_id]
+
+    async def get_next_track(self, state: GuildMusicState) -> Optional[TrackRequest]:
+        req = await state.queue.dequeue()
+        state.current_track_req = req
+        state.skip_votes.clear()  # Clear votes for the new track
+        
+        p_data = self.bot.persistence.load_persistence(state.guild_id)
+        if req:
+            t_data = extract_track_payload(req.track)
+            p_data["current_track"] = {
+                "data": t_data,
+                "uri": req.track.uri or req.track.title,
+                "requester_id": getattr(req.requester, "id", None),
+                "uid": req.uid
+            }
+        else:
+            p_data.pop("current_track", None)
+        self.bot.persistence.save_persistence(state.guild_id, p_data)
+        
+        return req
+
+
+# ====================================
+# PERMISSION LEVEL CHECKER (RBAC)
+# ====================================
+def get_user_level(bot: "MusicBot", member: discord.Member) -> int:
+    """
+    Evaluates integer role permission hierarchy:
+    0 = Full System Administrator (Owner / Server Admin)
+    1 = Music Administrator
+    2 = DJ / Track Manager
+    1000 = Regular Member / Listener
+    """
+    if member.id == bot.owner_id:
+        return 0
+    if member == member.guild.owner:
+        return 0
+    if member.guild_permissions.administrator:
+        return 0
+        
+    settings = bot.persistence.load_settings(member.guild.id)
+    role_map = settings.get("roles", {})
+    
+    highest_p = 1000
+    for role in member.roles:
+        r_str = str(role.id)
+        if r_str in role_map:
+            level = int(role_map[r_str])
+            if level < highest_p:
+                highest_p = level
+                
+    return highest_p
+
+def is_authorized(level: int):
+    """Decorator ensuring a user reaches the targeted permission level or throws CheckFailure."""
+    async def predicate(ctx: commands.Context):
+        u_level = get_user_level(ctx.bot, ctx.author)
+        
+        # Check lockdown constraints
+        state = ctx.bot.music_manager.get_state(ctx.guild.id)
+        if state.dj_lockdown and u_level >= 10:
+            raise commands.CheckFailure("DJ Lockdown Mode is active. Only DJs and Admins can change the music right now.")
+            
+        if u_level <= level:
+            return True
+            
+        raise commands.CheckFailure("You don't have the required permission to use this command.")
+    return commands.check(predicate)
+
+
+# ====================================
+# SESSION RESTORE HANDLER
+# ====================================
+async def restore_sessions(bot: "MusicBot"):
+    logger.info("Initializing session restore scan...")
+    if not os.path.exists(bot.persistence.base_dir):
+        return
+        
+    for guild_str in os.listdir(bot.persistence.base_dir):
+        if not guild_str.isdigit(): continue
+        guild_id = int(guild_str)
+        p_data = bot.persistence.load_persistence(guild_id)
+        vc_id = p_data.get("voice_channel_id")
+        
+        if vc_id:
+            logger.info(f"Dispatching restore_guild task for Guild {guild_id}")
+            bot.loop.create_task(restore_guild(bot, guild_id, vc_id, p_data))
+
+async def restore_guild(bot: "MusicBot", guild_id: int, vc_id: int, p_data: dict):
+    guild = bot.get_guild(guild_id)
+    retries = 0
+    while not guild and retries < 5:
+        await asyncio.sleep(2)
+        guild = bot.get_guild(guild_id)
+        retries += 1
+        
+    if not guild or (guild.voice_client and guild.voice_client.is_connected()): return
+    
+    vc = guild.get_channel(vc_id)
+    if not vc:
+        try: vc = await bot.fetch_channel(vc_id)
+        except discord.NotFound: pass
+    if not vc: return
+    
+    try:
+        player = await vc.connect(cls=wavelink.Player)
+        state = bot.music_manager.get_state(guild_id)
+        state.voice_channel_id = vc_id
+        
+        saved_queue = p_data.get("queue", [])
+        current_track = p_data.get("current_track")
+        
+        await state.queue.clear()
+        items_to_restore = ([current_track] if current_track else []) + saved_queue
+        
+        valid_tracks = []
+        if items_to_restore:
+            for item in items_to_restore:
+                track_data = item.get("data")
+                uri = item.get("uri")
+                track = None
                 try:
-                    # coro_callable should be an async function (callable that returns coroutine)
-                    await coro_callable()
+                    if track_data:
+                        if hasattr(wavelink.Playable, 'from_dict'):
+                            track = wavelink.Playable.from_dict(track_data)
+                        else:
+                            track = wavelink.Playable(track_data)
+                    if not track and uri:
+                        tracks = await wavelink.Playable.search(uri)
+                        if tracks: track = tracks[0]
+                    if track:
+                        req_id = item.get("requester_id")
+                        requester = guild.get_member(req_id) or bot.user
+                        uid = item.get("uid") or generate_uid()
+                        valid_tracks.append(TrackRequest(track=track, requester=requester, uid=uid))
                 except Exception as e:
-                    log.exception(f"Error executing queued edit: {e}")
-            # small sleep until next processing batch
-            await asyncio.sleep(5)
+                    logger.error(f"Failed to restore track {uri}: {e}")
+                    
+            if valid_tracks:
+                async with state.queue._lock:
+                    state.queue._queue.extend(valid_tracks)
+                    state.queue._save()
+                    
+            if not state.queue.is_empty and not player.playing:
+                next_req = await bot.music_manager.get_next_track(state)
+                if next_req: await player.play(next_req.track)
+            
+            if state.channel_id:
+                text_channel = guild.get_channel(state.channel_id)
+                if text_channel:
+                    try: await text_channel.send(f"Welcome back! I found an unfinished queue with {len(valid_tracks)} songs, so I'm resuming playback in {vc.name}.", delete_after=20.0)
+                    except discord.HTTPException: pass
+                    
+        EmbedManager.start_updater(bot, guild_id)
+        await update_rich_presence(bot)
+    except Exception as e:
+        logger.error(f"Failed to restore session for {guild_id}: {e}", exc_info=True)
+
+
+# ====================================
+# UI & EMBED MANAGEMENT
+# ====================================
+class EmbedManager:
+    @staticmethod
+    def format_time(ms: int) -> str:
+        seconds = ms // 1000
+        mins, secs = divmod(seconds, 60)
+        hours, mins = divmod(mins, 60)
+        if hours > 0: return f"{hours:02}:{mins:02}:{secs:02}"
+        return f"{mins:02}:{secs:02}"
+
+    @staticmethod
+    def create_progress_bar(position: int, length: int, size: int = 10) -> str:
+        if length == 0: return f"{Icons.BAR_START}{Icons.BAR_PLAYHEAD}{Icons.BAR_EMPTY * (size - 1)}{Icons.BAR_END}"
+        progress = position / length
+        filled_count = max(0, min(size - 1, int(progress * size)))
+        return f"{Icons.BAR_START}{Icons.BAR_FILLED * filled_count}{Icons.BAR_PLAYHEAD}{Icons.BAR_EMPTY * (size - 1 - filled_count)}{Icons.BAR_END}"
+
+    @staticmethod
+    def get_embed(bot: "MusicBot", guild_id: int, player: Optional[wavelink.Player]) -> discord.Embed:
+        if player and player.current:
+            track = player.current
+            if track.is_stream:
+                progress_str = f"🔴 **LIVE** | `{EmbedManager.format_time(player.position)}`"
+            else:
+                bar = EmbedManager.create_progress_bar(player.position, track.length)
+                progress_str = f"{bar} {EmbedManager.format_time(player.position)} / {EmbedManager.format_time(track.length)}"
+
+            embed = discord.Embed(title=f"{Icons.MUSIC} Now Playing", description=f"**{track.title}**\nby {track.author}\n\n{Icons.CD} {progress_str}", color=discord.Color.green())
+            artwork = track.artwork or (f"https://img.youtube.com/vi/{track.identifier}/maxresdefault.jpg" if track.source == 'youtube' else None)
+            if artwork: embed.set_thumbnail(url=artwork)
+            return embed
+        else:
+            settings = bot.persistence.load_settings(guild_id)
+            prefix = settings.get("prefix", os.getenv('BOT_PREFIX', 'h!'))
+            return discord.Embed(title="Playback Paused", description=f"Ready to play music. Use `/play` or `{prefix}play` to start.", color=discord.Color.greyple())
+
+    @staticmethod
+    async def _execute_update(bot: "MusicBot", guild_id: int):
+        """The actual function that talks to the Discord API."""
+        state = bot.music_manager.get_state(guild_id)
+
+        if not state.channel_id or not state.message_id: return
+        guild = bot.get_guild(guild_id)
+        if not guild: return
+        channel = guild.get_channel(state.channel_id)
+        if not channel: return
+
+        player = guild.voice_client
+        embed = EmbedManager.get_embed(bot, guild_id, player)
+        view = PlaybackControls(state)
+
+        try:
+            if state.status_message:
+                try:
+                    await state.status_message.edit(embed=embed, view=view)
+                    return
+                except discord.NotFound:
+                    state.status_message = None
+
+            message = await channel.fetch_message(state.message_id)
+            state.status_message = message
+            await message.edit(embed=embed, view=view)
+        except (discord.NotFound, discord.HTTPException):
+            pass
+        except Exception as e: 
+            logger.error(f"Failed to update status UI: {e}")
+
+    @staticmethod
+    async def update_status_message(bot: "MusicBot", guild_id: int):
+        """Gatekeeper that enforces a hard cooldown and discards redundant updates."""
+        state = bot.music_manager.get_state(guild_id)
+        now = time.time()
+        
+        # If we updated in the last 3 seconds, discard this request entirely to avoid 429 rate limit bans
+        if now - state.last_ui_update < 3.0:
+            return
+
+        # If a task is already running, skip this one
+        if state.ui_update_pending:
+            return
+
+        state.ui_update_pending = True
+        try:
+            await EmbedManager._execute_update(bot, guild_id)
+        finally:
+            state.last_ui_update = time.time()
+            state.ui_update_pending = False
+
+    @staticmethod
+    def start_updater(bot: "MusicBot", guild_id: int):
+        state = bot.music_manager.get_state(guild_id)
+        EmbedManager.stop_updater(bot, guild_id)
+        async def updater():
+            try:
+                while True:
+                    await asyncio.sleep(7)
+                    guild = bot.get_guild(guild_id)
+                    if not guild or not guild.voice_client: break
+                    player = guild.voice_client
+                    if player.playing and not player.paused:
+                        await EmbedManager.update_status_message(bot, guild_id)
+            except asyncio.CancelledError: pass
+        state.updater_task = bot.loop.create_task(updater())
+
+    @staticmethod
+    def stop_updater(bot: "MusicBot", guild_id: int):
+        state = bot.music_manager.get_state(guild_id)
+        if state.updater_task and not state.updater_task.done(): state.updater_task.cancel()
+
+
+async def send_temp_reply(interaction: discord.Interaction, content: str):
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.send_message(content, ephemeral=True)
+            msg = await interaction.original_response()
+        else:
+            msg = await interaction.followup.send(content, ephemeral=True, wait=True)
+        await asyncio.sleep(3.0)
+        if msg and interaction.message and msg.id != interaction.message.id: await msg.delete()
+    except: pass
+
+
+class PlaybackControls(discord.ui.View):
+    def __init__(self, state: Optional[GuildMusicState] = None):
+        super().__init__(timeout=None)
+        if state: self.sync_buttons(state)
+
+    def sync_buttons(self, state: GuildMusicState):
+        for child in self.children:
+            if getattr(child, "custom_id", None) == "playback_autoplay":
+                child.label = f"Autoplay: {'ON' if state.autoplay_enabled else 'OFF'}"
+                child.emoji = Icons.AUTOPLAY
+                child.style = discord.ButtonStyle.success if state.autoplay_enabled else discord.ButtonStyle.secondary
+            elif getattr(child, "custom_id", None) == "playback_shuffle":
+                child.emoji = Icons.SHUFFLE 
+                child.style = discord.ButtonStyle.success if state.shuffle_enabled else discord.ButtonStyle.secondary
+            elif getattr(child, "custom_id", None) == "playback_loop":
+                if state.loop_mode == "off":
+                    child.label = "Loop: OFF"
+                    child.emoji = Icons.REPEAT_OFF
+                    child.style = discord.ButtonStyle.secondary
+                elif state.loop_mode == "playlist":
+                    child.label = "Loop: Playlist"
+                    child.emoji = Icons.REPEAT
+                    child.style = discord.ButtonStyle.success
+                elif state.loop_mode == "song":
+                    child.label = "Loop: Song"
+                    child.emoji = Icons.REPEAT_ONE
+                    child.style = discord.ButtonStyle.success
+
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.primary, custom_id="playback_skip", emoji=Icons.SKIP)
+    async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bot = interaction.client
+        u_level = get_user_level(bot, interaction.user)
+        state = bot.music_manager.get_state(interaction.guild_id)
+        
+        if state.dj_lockdown and u_level >= 10:
+            return await send_temp_reply(interaction, "🔒 DJ Lockdown Mode is active. Only DJs and Admins can change the music right now.")
+
+        player = interaction.guild.voice_client
+        if not player or not player.playing:
+            return await send_temp_reply(interaction, "Nothing is playing.")
+
+        if u_level <= 1:
+            state.skip_requested = True
+            await player.skip(force=True)
+            await send_temp_reply(interaction, f"{Icons.SKIP} An Admin skipped the song.")
+        else:
+            if not interaction.user.voice or interaction.user.voice.channel != interaction.guild.me.voice.channel:
+                return await send_temp_reply(interaction, f"{Icons.ERROR} You need to be in my voice channel to vote to skip!")
+                
+            state.skip_votes.add(interaction.user.id)
+            listeners = len([m for m in interaction.guild.me.voice.channel.members if not m.bot])
+            settings = bot.persistence.load_settings(interaction.guild_id)
+            pct = settings.get("vote_percentage", 75)
+            required = max(1, math.ceil(listeners * (pct / 100)))
+            
+            if len(state.skip_votes) >= required:
+                state.skip_requested = True
+                await player.skip(force=True)
+                await interaction.channel.send(f"{Icons.SKIP} Enough votes reached ({len(state.skip_votes)}/{required}). Skipping!")
+            else:
+                await send_temp_reply(interaction, f"Voted to skip! ({len(state.skip_votes)}/{required} votes needed).")
+
+    @discord.ui.button(label="Stop", style=discord.ButtonStyle.danger, custom_id="playback_stop", emoji=Icons.STOP)
+    async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bot = interaction.client
+        u_level = get_user_level(bot, interaction.user)
+        if u_level > 0:
+            return await send_temp_reply(interaction, f"{Icons.ERROR} Only Administrators can stop the bot.")
+            
+        state = bot.music_manager.get_state(interaction.guild_id)
+        async with state.playback_lock:
+            state.is_stopping = True
+            state.autoplay_enabled = False
+            state.shuffle_enabled = False
+            state.loop_mode = "off"
+            state.skip_requested = True
+            await state.queue.clear()
+            state.voice_channel_id = None
+            
+            p_data = bot.persistence.load_persistence(interaction.guild_id)
+            p_data["voice_channel_id"] = None
+            p_data["current_track"] = None
+            bot.persistence.save_persistence(interaction.guild_id, p_data)
+            
+            player = interaction.guild.voice_client
+            if player:
+                try:
+                    await player.disconnect()
+                    EmbedManager.stop_updater(bot, interaction.guild_id)
+                    interaction.client.loop.create_task(send_temp_reply(interaction, f"{Icons.STOP} Stopped playing and cleared the queue."))
+                    await update_rich_presence(bot)
+                except Exception as e:
+                    logger.error(f"Stop Error: {e}", exc_info=True)
+            else:
+                interaction.client.loop.create_task(send_temp_reply(interaction, "Nothing is currently playing."))
+            state.is_stopping = False
+        await EmbedManager.update_status_message(bot, interaction.guild_id)
+
+    @discord.ui.button(label="Autoplay", style=discord.ButtonStyle.secondary, custom_id="playback_autoplay", emoji=Icons.AUTOPLAY)
+    async def autoplay_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bot = interaction.client
+        u_level = get_user_level(bot, interaction.user)
+        state = bot.music_manager.get_state(interaction.guild_id)
+        
+        if state.dj_lockdown and u_level >= 10:
+            return await send_temp_reply(interaction, "🔒 DJ Lockdown Mode is active.")
+        if u_level > 2:
+            return await send_temp_reply(interaction, f"{Icons.ERROR} Only DJs or Admins can toggle autoplay.")
+
+        async with state.playback_lock:
+            state.autoplay_enabled = not state.autoplay_enabled
+            if state.autoplay_enabled:
+                state.loop_mode = "off"
+                
+            player = interaction.guild.voice_client
+            if player and state.queue.is_empty:
+                player.autoplay = wavelink.AutoPlayMode.enabled if state.autoplay_enabled else wavelink.AutoPlayMode.partial
+
+        await EmbedManager.update_status_message(bot, interaction.guild_id)
+        await send_temp_reply(interaction, f"Autoplay is now **{'ON' if state.autoplay_enabled else 'OFF'}**.")
+
+    @discord.ui.button(label="Shuffle", style=discord.ButtonStyle.secondary, custom_id="playback_shuffle", emoji=Icons.SHUFFLE)
+    async def shuffle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bot = interaction.client
+        u_level = get_user_level(bot, interaction.user)
+        state = bot.music_manager.get_state(interaction.guild_id)
+        
+        if state.dj_lockdown and u_level >= 10:
+            return await send_temp_reply(interaction, "🔒 DJ Lockdown Mode is active.")
+        if u_level > 2:
+            return await send_temp_reply(interaction, f"{Icons.ERROR} Only DJs or Admins can shuffle.")
+
+        async with state.playback_lock:
+            state.shuffle_enabled = not state.shuffle_enabled
+            if state.shuffle_enabled: await state.queue.shuffle()
+
+        await EmbedManager.update_status_message(bot, interaction.guild_id)
+        await send_temp_reply(interaction, f"Queue Shuffled.")
+
+    @discord.ui.button(label="Loop: OFF", style=discord.ButtonStyle.secondary, custom_id="playback_loop")
+    async def loop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bot = interaction.client
+        u_level = get_user_level(bot, interaction.user)
+        state = bot.music_manager.get_state(interaction.guild_id)
+        
+        if state.dj_lockdown and u_level >= 10:
+            return await send_temp_reply(interaction, "🔒 DJ Lockdown Mode is active.")
+        if u_level > 2:
+            return await send_temp_reply(interaction, f"{Icons.ERROR} Only DJs or Admins can toggle loop.")
+
+        async with state.playback_lock:
+            if state.loop_mode == "off":
+                state.loop_mode = "playlist"
+                state.autoplay_enabled = False
+            elif state.loop_mode == "playlist":
+                state.loop_mode = "song"
+                state.autoplay_enabled = False
+            else:
+                state.loop_mode = "off"
+            
+            player = interaction.guild.voice_client
+            if player and not state.autoplay_enabled:
+                player.autoplay = wavelink.AutoPlayMode.partial
+
+        await EmbedManager.update_status_message(bot, interaction.guild_id)
+        await send_temp_reply(interaction, f"Loop mode set to **{state.loop_mode.capitalize()}**.")
+
+
+class QueuePaginator(discord.ui.View):
+    def __init__(self, queue: List[TrackRequest], title: str = f"{Icons.MUSIC} Current Queue", is_ephemeral: bool = False):
+        super().__init__(timeout=180)
+        self.queue = queue
+        self.title = title
+        self.current_page = 1
+        self.per_page = 10
+        self.total_pages = max(1, (len(self.queue) - 1) // self.per_page + 1) if self.queue else 1
+        
+        if is_ephemeral:
+            for child in self.children:
+                if getattr(child, "custom_id", None) == "queue_close":
+                    self.remove_item(child)
+                    break
+                    
+        self.update_buttons()
+
+    def update_buttons(self):
+        for child in self.children:
+            if child.custom_id in ("queue_first", "queue_prev"): child.disabled = self.current_page <= 1
+            elif child.custom_id in ("queue_next", "queue_last"): child.disabled = self.current_page >= self.total_pages
+
+    def generate_embed(self) -> discord.Embed:
+        embed = discord.Embed(title=self.title, color=discord.Color.blurple())
+        if not self.queue:
+            embed.description = f"{Icons.EMPTY} The queue is empty."
+            return embed
+        start_idx = (self.current_page - 1) * self.per_page
+        page_items = self.queue[start_idx:start_idx+self.per_page]
+        desc = ""
+        for idx, req in enumerate(page_items, start=start_idx + 1):
+            link = f"[{req.track.title}]({req.track.uri})" if req.track.uri else req.track.title
+            desc += f"`[{req.uid}]` **{idx}.** {link}\n{Icons.USER} {req.track.author} | Added by: {req.requester.mention}\n\n"
+        embed.description = desc
+        embed.set_footer(text=f"Page {self.current_page}/{self.total_pages} | Total Tracks: {len(self.queue)}")
+        return embed
+
+    @discord.ui.button(label="First", style=discord.ButtonStyle.secondary, custom_id="queue_first", emoji=Icons.FIRST)
+    async def first_button(self, interaction, button):
+        self.current_page = 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary, custom_id="queue_prev", emoji=Icons.PREV)
+    async def prev_button(self, interaction, button):
+        self.current_page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, custom_id="queue_close", emoji=Icons.CLOSE)
+    async def close_button(self, interaction, button):
+        try:
+            await interaction.message.delete()
+        except discord.HTTPException:
+            pass
+        self.stop()
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary, custom_id="queue_next", emoji=Icons.NEXT)
+    async def next_button(self, interaction, button):
+        self.current_page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+
+    @discord.ui.button(label="Last", style=discord.ButtonStyle.secondary, custom_id="queue_last", emoji=Icons.LAST)
+    async def last_button(self, interaction, button):
+        self.current_page = self.total_pages
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+
+class LyricsPaginator(discord.ui.View):
+    """Paginator specifically designed to handle long lyrics split into multiple pages."""
+    def __init__(self, pages: List[str], title: str = "Lyrics", source: str = "Unknown", is_ephemeral: bool = False):
+        super().__init__(timeout=180)
+        self.pages = pages
+        self.title = title
+        self.source = source
+        self.current_page = 1
+        self.total_pages = max(1, len(self.pages))
+        
+        if is_ephemeral:
+            for child in self.children:
+                if getattr(child, "custom_id", None) == "lyrics_close":
+                    self.remove_item(child)
+                    break
+                    
+        self.update_buttons()
+
+    def update_buttons(self):
+        for child in self.children:
+            if child.custom_id in ("lyrics_prev"): child.disabled = self.current_page <= 1
+            elif child.custom_id in ("lyrics_next"): child.disabled = self.current_page >= self.total_pages
+
+    def generate_embed(self) -> discord.Embed:
+        embed = discord.Embed(title=self.title, description=self.pages[self.current_page - 1], color=discord.Color.blurple())
+        embed.set_footer(text=f"Page {self.current_page}/{self.total_pages} • Source: {self.source}")
+        return embed
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary, custom_id="lyrics_prev", emoji=Icons.PREV)
+    async def prev_button(self, interaction, button):
+        self.current_page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, custom_id="lyrics_close", emoji=Icons.CLOSE)
+    async def close_button(self, interaction, button):
+        try:
+            await interaction.message.delete()
+        except discord.HTTPException:
+            pass
+        self.stop()
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary, custom_id="lyrics_next", emoji=Icons.NEXT)
+    async def next_button(self, interaction, button):
+        self.current_page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.generate_embed(), view=self)
+
+
+# ====================================
+# RICH PRESENCE HANDLER
+# ====================================
+async def update_rich_presence(bot: commands.Bot):
+    try:
+        playing_tracks = [vc.current.title for vc in bot.voice_clients if isinstance(vc, wavelink.Player) and vc.playing and vc.current]
+        if not playing_tracks:
+            await bot.change_presence(activity=None)
+            return
+        status_text = ", ".join(playing_tracks)
+        if len(status_text) > 128: status_text = status_text[:125] + "..."
+        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=status_text))
+    except Exception as e: logger.error(f"Presence update error: {e}")
+
+
+# ====================================
+# BOT CORE CLASS
+# ====================================
+class HikariContext(commands.Context):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._invocation_deleted = False
+
+    async def send(self, content=None, **kwargs):
+        if self.interaction is None:
+            if not self._invocation_deleted and self.message:
+                try: await self.message.delete()
+                except: pass
+                self._invocation_deleted = True
+            if kwargs.pop('ephemeral', False) and 'delete_after' not in kwargs:
+                kwargs['delete_after'] = 3.0
+        return await super().send(content, **kwargs)
+
+
+async def get_dynamic_prefix(bot: "MusicBot", message: discord.Message):
+    if not message.guild: return os.getenv('BOT_PREFIX', 'h!')
+    return bot.persistence.load_settings(message.guild.id).get("prefix", os.getenv('BOT_PREFIX', 'h!') )
+
+
+class MusicBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.voice_states = True
+        super().__init__(command_prefix=get_dynamic_prefix, intents=intents, owner_id=639906782658953256)
+        self.persistence = PersistenceManager()
+        self.music_manager = MusicManager(self)
+        self.api_runner = None
+
+    async def get_context(self, message: discord.Message, *, cls=None):
+        return await super().get_context(message, cls=cls or HikariContext)
+
+    async def setup_hook(self):
+        host = os.getenv('LAVALINK_HOST', '127.0.0.1')
+        node = wavelink.Node(uri=f'http://{host}:2333', password='youshallnotpass')
+        await wavelink.Pool.connect(nodes=[node], client=self, cache_capacity=100)
+        self.add_view(PlaybackControls())
+        logger.info("Wavelink nodes configured and persistent UI views registered.")
+        
+        # Start the REST API cleanly as a parasitic background task
+        self.loop.create_task(self._safe_start_api_server())
+
+    async def _safe_start_api_server(self):
+        """Safe wrapper to ensure the API Server failing doesn't crash the bot loop."""
+        try:
+            await self.start_api_server()
         except Exception as e:
-            log.exception(f"Edit queue processor crashed: {e}")
-            await asyncio.sleep(5)
+            logger.error(f"REST API server failed to start or crashed: {e}", exc_info=True)
+
+    # ---------------------------------------------------------
+    # REST API HANDLERS
+    # ---------------------------------------------------------
+    async def start_api_server(self):
+        """Starts the aiohttp web server running alongside the bot loop."""
+        app = web.Application()
+        
+        # Base Data Endpoints
+        app.router.add_route('*', '/api/status', self.api_get_global_status)
+        app.router.add_route('*', '/api/status/{guild_id}', self.api_get_status)
+        app.router.add_route('*', '/api/lyrics', self.api_get_lyrics)
+        
+        # Control Endpoints (Mapped explicitly to bot commands)
+        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc']:
+            app.router.add_route('*', f'/api/{cmd}', getattr(self, f'api_{cmd}'))
+        
+        # Handle CORS preflight for all endpoints
+        async def cors_handler(request): 
+            return web.Response(headers={
+                "Access-Control-Allow-Origin": "*", 
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS", 
+                "Access-Control-Allow-Headers": "Content-Type"
+            })
+        app.router.add_options('/{tail:.*}', cors_handler)
+        
+        self.api_runner = web.AppRunner(app)
+        await self.api_runner.setup()
+        port = int(os.getenv("API_PORT", 8080))
+        site = web.TCPSite(self.api_runner, '0.0.0.0', port)
+        await site.start()
+        logger.info(f"API Server listening on port {port}")
+
+    async def get_api_data(self, request: web.Request) -> dict:
+        """Extracts JSON body or query parameters dynamically."""
+        data = dict(request.query)
+        if request.can_read_body:
+            try:
+                json_data = await request.json()
+                if isinstance(json_data, dict):
+                    data.update(json_data)
+            except Exception:
+                pass
+        return data
+
+    async def api_get_global_status(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        return web.json_response({
+            "status": "online",
+            "latency_ms": round(self.latency * 1000) if self.latency else 0,
+            "guilds_active": len(self.music_manager.states)
+        }, headers=headers)
+
+    async def api_get_status(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        guild_id = int(request.match_info.get('guild_id', 0))
+        
+        if guild_id not in self.music_manager.states:
+            return web.json_response({"error": "Guild not active or found."}, status=404, headers=headers)
+            
+        state = self.music_manager.get_state(guild_id)
+        guild = self.get_guild(guild_id)
+        player = guild.voice_client if guild else None
+        
+        queue_data = []
+        for req in list(state.queue._queue):
+            queue_data.append({
+                "title": req.track.title,
+                "author": req.track.author,
+                "uri": req.track.uri,
+                "requester": str(req.requester),
+                "uid": req.uid
+            })
+            
+        current_data = None
+        if player and player.current:
+            current_data = {
+                "title": player.current.title,
+                "author": player.current.author,
+                "uri": player.current.uri,
+                "length": player.current.length,
+                "position": player.position,
+                "is_paused": player.paused
+            }
+            
+        return web.json_response({
+            "guild_id": guild_id,
+            "connected_channel": state.voice_channel_id,
+            "volume": player.volume if player else 100,
+            "autoplay": state.autoplay_enabled,
+            "shuffle": state.shuffle_enabled,
+            "loop_mode": state.loop_mode,
+            "dj_lockdown": state.dj_lockdown,
+            "current_track": current_data,
+            "queue": queue_data
+        }, headers=headers)
+
+    async def api_get_lyrics(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        query = data.get('q') or data.get('query')
+        guild_id = data.get('guild_id')
+
+        if not query and guild_id:
+            if int(guild_id) not in self.music_manager.states:
+                return web.json_response({"error": "Guild not active."}, status=404, headers=headers)
+            guild = self.get_guild(int(guild_id))
+            player = guild.voice_client if guild else None
+            if not player or not player.current:
+                return web.json_response({"error": "No music currently playing."}, status=400, headers=headers)
+            query = f"{player.current.title} {player.current.author}"
+
+        if not query:
+            return web.json_response({"error": "Provide a query or guild_id."}, status=400, headers=headers)
+
+        result = await self.music_manager.lyrics.get_lyrics(query)
+        if not result:
+            return web.json_response({"error": "Lyrics not found.", "query": query}, status=404, headers=headers)
+            
+        lyric_text, source = result
+        return web.json_response({"query": query, "source": source, "lyrics": lyric_text}, headers=headers)
+
+    async def api_play(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        query = data.get('query')
+        
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        if not query: return web.json_response({"error": "Missing query"}, status=400, headers=headers)
+        
+        state = self.music_manager.get_state(guild_id)
+        
+        if self.music_manager.spotify.is_spotify_url(query):
+            if not self.music_manager.spotify.enabled:
+                return web.json_response({"error": "Spotify support not enabled"}, status=400, headers=headers)
+            query = await self.music_manager.spotify.resolve(query)
+            
+        tracks = await wavelink.Playable.search(query)
+        if not tracks: return web.json_response({"error": "No tracks found"}, status=404, headers=headers)
+        
+        vc_id = data.get('voice_channel_id') or state.voice_channel_id
+        if not vc_id: return web.json_response({"error": "No voice channel provided or active"}, status=400, headers=headers)
+        
+        player = guild.voice_client
+        if not player:
+            vc = guild.get_channel(int(vc_id))
+            if not vc: return web.json_response({"error": "Voice channel not found"}, status=404, headers=headers)
+            player = await vc.connect(cls=wavelink.Player)
+            state.voice_channel_id = vc.id
+            p_data = self.persistence.load_persistence(guild_id)
+            p_data["voice_channel_id"] = vc.id
+            self.persistence.save_persistence(guild_id, p_data)
+            
+        requester_id = int(data.get('requester_id', guild.me.id))
+        requester = guild.get_member(requester_id) or guild.me
+        
+        async with state.playback_lock:
+            if isinstance(tracks, wavelink.Playlist):
+                for track in tracks.tracks: await state.queue.enqueue(TrackRequest(track, requester))
+                res = {"success": True, "added_playlist": tracks.name}
+            else:
+                await state.queue.enqueue(TrackRequest(tracks[0], requester))
+                res = {"success": True, "added_track": tracks[0].title}
+                
+            if not player.playing:
+                next_req = await self.music_manager.get_next_track(state)
+                if next_req:
+                    player.autoplay = wavelink.AutoPlayMode.partial
+                    await player.play(next_req.track)
+                    
+        await EmbedManager.update_status_message(self, guild_id)
+        return web.json_response(res, headers=headers)
+
+    async def api_playnext(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        query = data.get('query')
+        
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        if not query: return web.json_response({"error": "Missing query"}, status=400, headers=headers)
+        
+        state = self.music_manager.get_state(guild_id)
+        
+        if self.music_manager.spotify.is_spotify_url(query):
+            if not self.music_manager.spotify.enabled:
+                return web.json_response({"error": "Spotify support not enabled"}, status=400, headers=headers)
+            query = await self.music_manager.spotify.resolve(query)
+            
+        tracks = await wavelink.Playable.search(query)
+        if not tracks: return web.json_response({"error": "No tracks found"}, status=404, headers=headers)
+        
+        vc_id = data.get('voice_channel_id') or state.voice_channel_id
+        if not vc_id: return web.json_response({"error": "No voice channel provided or active"}, status=400, headers=headers)
+        
+        player = guild.voice_client
+        if not player:
+            vc = guild.get_channel(int(vc_id))
+            if not vc: return web.json_response({"error": "Voice channel not found"}, status=404, headers=headers)
+            player = await vc.connect(cls=wavelink.Player)
+            state.voice_channel_id = vc.id
+            p_data = self.persistence.load_persistence(guild_id)
+            p_data["voice_channel_id"] = vc.id
+            self.persistence.save_persistence(guild_id, p_data)
+            
+        requester_id = int(data.get('requester_id', guild.me.id))
+        requester = guild.get_member(requester_id) or guild.me
+        
+        async with state.playback_lock:
+            if isinstance(tracks, wavelink.Playlist):
+                for t in reversed(tracks.tracks): await state.queue.add_to_front(TrackRequest(t, requester))
+                res = {"success": True, "added_playlist_next": tracks.name}
+            else:
+                await state.queue.add_to_front(TrackRequest(tracks[0], requester))
+                res = {"success": True, "added_track_next": tracks[0].title}
+                
+            if not player.playing:
+                next_req = await self.music_manager.get_next_track(state)
+                if next_req:
+                    player.autoplay = wavelink.AutoPlayMode.partial
+                    await player.play(next_req.track)
+                    
+        await EmbedManager.update_status_message(self, guild_id)
+        return web.json_response(res, headers=headers)
+
+    async def api_forceplay(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        query = data.get('query')
+        
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        if not query: return web.json_response({"error": "Missing query"}, status=400, headers=headers)
+        
+        state = self.music_manager.get_state(guild_id)
+        
+        if self.music_manager.spotify.is_spotify_url(query):
+            if not self.music_manager.spotify.enabled:
+                return web.json_response({"error": "Spotify support not enabled"}, status=400, headers=headers)
+            query = await self.music_manager.spotify.resolve(query)
+            
+        tracks = await wavelink.Playable.search(query)
+        if not tracks: return web.json_response({"error": "No tracks found"}, status=404, headers=headers)
+        track = tracks.tracks[0] if isinstance(tracks, wavelink.Playlist) else tracks[0]
+        
+        vc_id = data.get('voice_channel_id') or state.voice_channel_id
+        if not vc_id: return web.json_response({"error": "No voice channel active"}, status=400, headers=headers)
+        
+        player = guild.voice_client
+        if not player:
+            vc = guild.get_channel(int(vc_id))
+            if not vc: return web.json_response({"error": "Voice channel not found"}, status=404, headers=headers)
+            player = await vc.connect(cls=wavelink.Player)
+            state.voice_channel_id = vc.id
+            p_data = self.persistence.load_persistence(guild_id)
+            p_data["voice_channel_id"] = vc.id
+            self.persistence.save_persistence(guild_id, p_data)
+            
+        state.skip_requested = True
+        await player.play(track, force=True)
+        await EmbedManager.update_status_message(self, guild_id)
+        return web.json_response({"success": True, "force_played": track.title}, headers=headers)
+
+    async def api_skip(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        
+        player = guild.voice_client
+        if not player or not player.playing:
+            return web.json_response({"error": "Nothing is playing"}, status=400, headers=headers)
+            
+        state = self.music_manager.get_state(guild_id)
+        state.skip_requested = True
+        await player.skip(force=True)
+        return web.json_response({"success": True, "action": "skipped"}, headers=headers)
+
+    async def api_stop(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        
+        state = self.music_manager.get_state(guild_id)
+        async with state.playback_lock:
+            state.is_stopping = True
+            state.autoplay_enabled = False
+            state.shuffle_enabled = False
+            state.loop_mode = "off"
+            state.skip_requested = True
+            await state.queue.clear()
+            state.voice_channel_id = None
+            
+            p_data = self.persistence.load_persistence(guild_id)
+            p_data["voice_channel_id"] = None
+            p_data["current_track"] = None
+            self.persistence.save_persistence(guild_id, p_data)
+            
+            player = guild.voice_client
+            if player:
+                try: 
+                    await player.disconnect()
+                    EmbedManager.stop_updater(self, guild_id)
+                    await update_rich_presence(self)
+                except Exception: pass
+            state.is_stopping = False
+            
+        await EmbedManager.update_status_message(self, guild_id)
+        return web.json_response({"success": True, "action": "stopped"}, headers=headers)
+
+    async def api_clearqueue(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        
+        state = self.music_manager.get_state(guild_id)
+        await state.queue.clear()
+        await EmbedManager.update_status_message(self, guild_id)
+        return web.json_response({"success": True, "action": "cleared"}, headers=headers)
+
+    async def api_remove(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        uid = data.get('uid')
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        if not uid: return web.json_response({"error": "Missing uid"}, status=400, headers=headers)
+        
+        state = self.music_manager.get_state(guild_id)
+        removed = await state.queue.remove_by_uid(uid)
+        if removed:
+            await EmbedManager.update_status_message(self, guild_id)
+            return web.json_response({"success": True, "removed": removed.track.title}, headers=headers)
+        return web.json_response({"error": "UID not found in queue"}, status=404, headers=headers)
+
+    async def api_shuffle(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        
+        state = self.music_manager.get_state(guild_id)
+        
+        if 'boolean' in data:
+            val = str(data['boolean']).lower() in ['true', '1', 'y', 'yes']
+        elif 'state' in data:
+            val = str(data['state']).lower() in ['true', '1', 'y', 'yes']
+        else:
+            val = not state.shuffle_enabled
+
+        async with state.playback_lock:
+            state.shuffle_enabled = val
+            if state.shuffle_enabled: 
+                await state.queue.shuffle()
+
+        await EmbedManager.update_status_message(self, guild_id)
+        return web.json_response({"success": True, "shuffle": state.shuffle_enabled}, headers=headers)
+
+    async def api_autoplay(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        
+        state = self.music_manager.get_state(guild_id)
+        
+        if 'boolean' in data:
+            val = str(data['boolean']).lower() in ['true', '1', 'y', 'yes']
+        elif 'state' in data:
+            val = str(data['state']).lower() in ['true', '1', 'y', 'yes']
+        else:
+            val = not state.autoplay_enabled
+
+        async with state.playback_lock:
+            state.autoplay_enabled = val
+            if state.autoplay_enabled:
+                state.loop_mode = "off"
+                
+            player = guild.voice_client
+            if player and state.queue.is_empty:
+                player.autoplay = wavelink.AutoPlayMode.enabled if state.autoplay_enabled else wavelink.AutoPlayMode.partial
+
+        await EmbedManager.update_status_message(self, guild_id)
+        return web.json_response({"success": True, "autoplay": state.autoplay_enabled}, headers=headers)
+
+    async def api_loop(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        mode = data.get('mode', 'off').lower()
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        
+        if mode not in ['off', 'playlist', 'song']:
+            return web.json_response({"error": "Invalid mode"}, status=400, headers=headers)
+            
+        state = self.music_manager.get_state(guild_id)
+        async with state.playback_lock:
+            state.loop_mode = mode
+            if mode != "off":
+                state.autoplay_enabled = False
+                player = guild.voice_client
+                if player:
+                    player.autoplay = wavelink.AutoPlayMode.partial
+                    
+        await EmbedManager.update_status_message(self, guild_id)
+        return web.json_response({"success": True, "loop_mode": state.loop_mode}, headers=headers)
+
+    async def api_filter(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        preset = data.get('preset', 'clear').lower()
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        
+        player = guild.voice_client
+        if not player:
+            return web.json_response({"error": "Nothing playing"}, status=400, headers=headers)
+            
+        try:
+            filters: wavelink.Filters = player.filters
+            filters.reset()
+            
+            if preset == "bassboost":
+                filters.equalizer.set(bands=[
+                    {"band": 0, "gain": 0.8}, {"band": 1, "gain": 0.7}, {"band": 2, "gain": 0.5},
+                    {"band": 3, "gain": 0.3}, {"band": 4, "gain": 0.1}
+                ])
+            elif preset == "nightcore":
+                filters.timescale.set(speed=1.25, pitch=1.25)
+            elif preset == "8d":
+                filters.rotation.set(rotation_hz=0.2)
+            elif preset == "vaporwave":
+                filters.timescale.set(speed=0.8, pitch=0.8)
+            elif preset != "clear":
+                return web.json_response({"error": "Invalid preset"}, status=400, headers=headers)
+                
+            await player.set_filters(filters)
+            return web.json_response({"success": True, "filter": preset}, headers=headers)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=headers)
+
+    async def api_movevc(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        channel_id = int(data.get('channel_id', 0))
+        
+        guild = self.get_guild(guild_id)
+        if not guild: return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+        
+        if not guild.voice_client:
+            return web.json_response({"error": "Not playing music"}, status=400, headers=headers)
+            
+        channel = guild.get_channel(channel_id)
+        if not channel: return web.json_response({"error": "Channel not found"}, status=404, headers=headers)
+        
+        state = self.music_manager.get_state(guild_id)
+        await channel.connect(cls=wavelink.Player)
+        state.voice_channel_id = channel.id
+        
+        p_data = self.persistence.load_persistence(guild_id)
+        p_data["voice_channel_id"] = channel.id
+        self.persistence.save_persistence(guild_id, p_data)
+        
+        return web.json_response({"success": True, "moved_to": channel.name}, headers=headers)
+
+    # ---------------------------------------------------------
+    # CORE DISCORD EVENT HANDLERS
+    # ---------------------------------------------------------
+    async def on_ready(self):
+        logger.info(f'Logged in as {self.user}')
+        if os.path.exists(self.persistence.base_dir):
+            for g_str in os.listdir(self.persistence.base_dir):
+                if g_str.isdigit():
+                    try: await EmbedManager.update_status_message(self, int(g_str))
+                    except: pass
+            self.loop.create_task(self._safe_restore_sessions())
+        await update_rich_presence(self)
+        
+    async def _safe_restore_sessions(self):
+        logger.info("Waiting for Wavelink nodes to initialize before restoring sessions...")
+        while not wavelink.Pool.nodes: await asyncio.sleep(1)
+        logger.info("Wavelink nodes detected. Applying 3-second buffer for Discord cache...")
+        await asyncio.sleep(3) 
+        await restore_sessions(self)
+
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        if isinstance(error, commands.CheckFailure):
+            try: await ctx.send(f"{Icons.ERROR} {str(error)}", ephemeral=True, delete_after=5.0)
+            except: pass
+        elif isinstance(error, commands.CommandNotFound): pass
+        else: super().on_command_error(ctx, error)
+
+    async def close(self):
+        logger.info("Initiating shutdown loop...")
+        
+        # Cleanly shutdown the API server if it is running
+        if self.api_runner:
+            await self.api_runner.cleanup()
+            
+        for s in self.music_manager.states.values():
+            if s.updater_task and not s.updater_task.done(): s.updater_task.cancel()
+        
+        if os.path.exists(self.persistence.base_dir):
+            for g_str in os.listdir(self.persistence.base_dir):
+                if not g_str.isdigit(): continue
+                g_id = int(g_str)
+                guild = self.get_guild(g_id)
+                if guild and guild.voice_client:
+                    try: await guild.voice_client.disconnect()
+                    except: pass
+                p_data = self.persistence.load_persistence(g_id)
+                ch_id, msg_id = p_data.get("channel_id"), p_data.get("message_id")
+                if ch_id and msg_id:
+                    try:
+                        chan = self.get_channel(ch_id) or await self.fetch_channel(ch_id)
+                        if chan:
+                            embed = discord.Embed(title=f"{Icons.STOP} System Offline", description="Hikari is currently offline or restarting.\nControls disabled.", color=discord.Color.red())
+                            await chan.get_partial_message(msg_id).edit(embed=embed, view=discord.ui.View())
+                    except: pass
+        
+        logger.info("Graceful shutdown complete. Closing connection.")
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            if isinstance(handler, logging.FileHandler):
+                handler.close()
+                root_logger.removeHandler(handler)
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        if os.path.exists("bot.log"):
+            os.rename("bot.log", f"bot-{timestamp}.log")
+            logger.info(f"Log file renamed to bot-{timestamp}.log")
+        await super().close()
+
+bot = MusicBot()
+
+
+# ====================================
+# CONFIGURATION COMMANDS (LEVEL 0 ADMINS)
+# ====================================
+@bot.command(name='sync')
+@commands.is_owner()
+async def sync_commands(ctx: commands.Context):
+    """Hidden text command to manually sync slash commands to Discord."""
+    try:
+        synced = await bot.tree.sync()
+        await ctx.send(f"{Icons.SUCCESS} Synced {len(synced)} commands to Discord.")
+    except Exception as e:
+        await ctx.send(f"{Icons.ERROR} Failed to sync commands: {e}")
+
+@bot.hybrid_group(name="settings", invoke_without_command=True)
+@is_authorized(level=0)
+@app_commands.default_permissions(administrator=True)
+async def settings_cmd(ctx: commands.Context):
+    """Manage bot settings. Only server admins can see this."""
+    if ctx.invoked_subcommand is None:
+        await ctx.send(f"{Icons.ERROR} Missing configuration target. Try `/settings help`.", ephemeral=True)
+
+@settings_cmd.command(name="help", description="Show a guide on how to configure the bot.")
+@is_authorized(level=0)
+async def settings_help(ctx: commands.Context):
+    embed = discord.Embed(
+        title=f"{Icons.TOOLS} Settings Commands",
+        description="Here are all the available configuration commands:",
+        color=discord.Color.blurple()
+    )
+    embed.add_field(name="`/settings setrole <@role> <level>`", value="Assign a role to be a Music Admin (Level 1) or DJ (Level 2).", inline=False)
+    embed.add_field(name="`/settings lockdown <True/False>`", value="Lock the bot so only DJs and Admins can control the music.", inline=False)
+    embed.add_field(name="`/settings votepercentage <number>`", value="Set the percentage of listeners needed to skip a song.", inline=False)
+    embed.add_field(name="`/settings prefix <prefix>`", value="Change the bot's legacy text command prefix.", inline=False)
+    embed.add_field(name="`/settings setup`", value="Set up the permanent music player panel in this text channel.", inline=False)
+    await ctx.send(embed=embed, ephemeral=True)
+
+@settings_cmd.command(name="prefix", description="Change the bot's legacy prefix for this server.")
+@is_authorized(level=0)
+async def settings_prefix(ctx: commands.Context, new_prefix: str):
+    settings = bot.persistence.load_settings(ctx.guild.id)
+    settings["prefix"] = new_prefix
+    bot.persistence.save_settings(ctx.guild.id, settings)
+    await ctx.send(f"{Icons.SUCCESS} Legacy text prefix updated to `{new_prefix}`", ephemeral=True)
+
+@settings_cmd.command(name="setrole", description="Assign a role to be a Music Admin (Level 1) or DJ (Level 2).")
+@is_authorized(level=0)
+async def settings_setrole(ctx: commands.Context, role: discord.Role, level: int):
+    if level not in (1, 2):
+        return await ctx.send(f"{Icons.ERROR} Level must be exactly 1 (Music Admin) or 2 (DJ).", ephemeral=True)
+    settings = bot.persistence.load_settings(ctx.guild.id)
+    if "roles" not in settings: settings["roles"] = {}
+    settings["roles"][str(role.id)] = level
+    bot.persistence.save_settings(ctx.guild.id, settings)
+    await ctx.send(f"{Icons.SUCCESS} Successfully made {role.mention} a Level {level} user.", ephemeral=True)
+
+@settings_cmd.command(name="lockdown", description="Lock the bot so only DJs and Admins can control the music.")
+@is_authorized(level=1)  # Levels 0 and 1 are allowed to toggle
+async def settings_lockdown(ctx: commands.Context, toggle: bool):
+    settings = bot.persistence.load_settings(ctx.guild.id)
+    settings["dj_lockdown"] = toggle
+    bot.persistence.save_settings(ctx.guild.id, settings)
+    await ctx.send(f"{Icons.SUCCESS} DJ Lockdown mode set to **{'ENABLED' if toggle else 'DISABLED'}**.", ephemeral=True)
+
+@settings_cmd.command(name="votepercentage", description="Set the percentage of listeners needed to skip a song.")
+@is_authorized(level=0)
+async def settings_vote_pct(ctx: commands.Context, percentage: int):
+    if not (1 <= percentage <= 100):
+        return await ctx.send(f"{Icons.ERROR} Please provide a number between 1 and 100.", ephemeral=True)
+    settings = bot.persistence.load_settings(ctx.guild.id)
+    settings["vote_percentage"] = percentage
+    bot.persistence.save_settings(ctx.guild.id, settings)
+    await ctx.send(f"{Icons.SUCCESS} Users now need **{percentage}%** of the voice channel to agree to skip a song.", ephemeral=True)
+
+@settings_cmd.command(name="setup", description="Set up the permanent music player in this channel.")
+@is_authorized(level=0)
+async def settings_setup(ctx: commands.Context):
+    await ctx.defer(ephemeral=True)
+    state = bot.music_manager.get_state(ctx.guild.id)
+    state.channel_id = ctx.channel.id
+    embed = EmbedManager.get_embed(bot, ctx.guild.id, ctx.guild.voice_client)
+    view = PlaybackControls(state)
+    message = await ctx.channel.send(embed=embed, view=view)
+    state.message_id = message.id
+    state.status_message = message
+    
+    p_data = bot.persistence.load_persistence(ctx.guild.id)
+    p_data["channel_id"] = message.channel.id
+    p_data["message_id"] = message.id
+    bot.persistence.save_persistence(ctx.guild.id, p_data)
+    await ctx.send(f"{Icons.SUCCESS} Music player panel created!", ephemeral=True)
+
+
+# ====================================
+# SYSTEM & PLAYBACK MANAGEMENT COMMANDS
+# ====================================
+@bot.hybrid_command(name="stop", description="Stop the music, clear the queue, and make the bot leave. (Admins only)")
+@is_authorized(level=0)
+@app_commands.default_permissions(administrator=True)
+async def stop(ctx: commands.Context):
+    state = bot.music_manager.get_state(ctx.guild.id)
+    async with state.playback_lock:
+        state.is_stopping = True
+        state.autoplay_enabled = False
+        state.shuffle_enabled = False
+        state.loop_mode = "off"
+        state.skip_requested = True
+        await state.queue.clear()
+        state.voice_channel_id = None
+        
+        p_data = bot.persistence.load_persistence(ctx.guild.id)
+        p_data["voice_channel_id"] = None
+        p_data["current_track"] = None
+        bot.persistence.save_persistence(ctx.guild.id, p_data)
+        
+        if ctx.voice_client:
+            await ctx.voice_client.disconnect()
+            EmbedManager.stop_updater(bot, ctx.guild.id)
+            await ctx.send(f"{Icons.STOP} Stopped the music and cleared the queue.", ephemeral=True)
+            await update_rich_presence(bot)
+        else:
+            await ctx.send("Nothing is currently playing.", ephemeral=True)
+        state.is_stopping = False
+    await EmbedManager.update_status_message(bot, ctx.guild.id)
+
+@bot.hybrid_command(name="forceplay", description="Instantly stop the current song and play a new one. (Admins only)")
+@is_authorized(level=0)
+@app_commands.default_permissions(administrator=True)
+async def forceplay(ctx: commands.Context, *, query: str):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        return await ctx.send("You need to enter a voice channel.", ephemeral=True)
+    await ctx.defer(ephemeral=True)
+    
+    if bot.music_manager.spotify.is_spotify_url(query):
+        if not bot.music_manager.spotify.enabled: return await ctx.send("Spotify support not enabled.", ephemeral=True)
+        query = await bot.music_manager.spotify.resolve(query)
+    
+    tracks = await wavelink.Playable.search(query)
+    if not tracks: return await ctx.send(f"{Icons.EMPTY} Could not find any songs matching your search.", ephemeral=True)
+    track = tracks.tracks[0] if isinstance(tracks, wavelink.Playlist) else tracks[0]
+    
+    state = bot.music_manager.get_state(ctx.guild.id)
+    
+    if not ctx.voice_client:
+        player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        p_data = bot.persistence.load_persistence(ctx.guild.id)
+        p_data["voice_channel_id"] = ctx.author.voice.channel.id
+        bot.persistence.save_persistence(ctx.guild.id, p_data)
+    else: player = ctx.voice_client
+
+    state.skip_requested = True
+    await player.play(track, force=True)
+    await ctx.send(f"{Icons.PLAY} Interrupting to play: **{track.title}**", ephemeral=True)
+
+@bot.hybrid_command(name="movevc", description="Move the bot to a different voice channel without stopping the music.")
+@is_authorized(level=1)  # Level 0 and Level 1 commands
+async def movevc(ctx: commands.Context, channel: discord.VoiceChannel):
+    if not ctx.voice_client:
+        return await ctx.send(f"{Icons.ERROR} I'm not playing music in a voice channel right now.", ephemeral=True)
+    
+    state = bot.music_manager.get_state(ctx.guild.id)
+    await channel.connect(cls=wavelink.Player)
+    state.voice_channel_id = channel.id
+    
+    p_data = bot.persistence.load_persistence(ctx.guild.id)
+    p_data["voice_channel_id"] = channel.id
+    bot.persistence.save_persistence(ctx.guild.id, p_data)
+    
+    await ctx.send(f"{Icons.SUCCESS} Moved the music over to `{channel.name}`.", ephemeral=True)
+
+
+# ====================================
+# INTERMEDIARY & STANDARD COMMANDS
+# ====================================
+@bot.hybrid_command(name="playnext", description="Add a song to play immediately after the current one finishes.")
+@is_authorized(level=2)
+async def playnext(ctx: commands.Context, *, query: str):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        return await ctx.send("Enter a voice channel first.", ephemeral=True)
+    await ctx.defer(ephemeral=True)
+    
+    if bot.music_manager.spotify.is_spotify_url(query):
+        if not bot.music_manager.spotify.enabled: return await ctx.send("Spotify support not enabled.", ephemeral=True)
+        query = await bot.music_manager.spotify.resolve(query)
+    
+    tracks = await wavelink.Playable.search(query)
+    if not tracks: return await ctx.send("No songs found matching your search.", ephemeral=True)
+    
+    state = bot.music_manager.get_state(ctx.guild.id)
+    if not ctx.voice_client:
+        player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        p_data = bot.persistence.load_persistence(ctx.guild.id)
+        p_data["voice_channel_id"] = ctx.author.voice.channel.id
+        bot.persistence.save_persistence(ctx.guild.id, p_data)
+    else: player = ctx.voice_client
+
+    if isinstance(tracks, wavelink.Playlist):
+        for t in reversed(tracks.tracks):
+            await state.queue.add_to_front(TrackRequest(t, ctx.author))
+        await ctx.send(f"{Icons.ADDED} Added the playlist to play next.", ephemeral=True)
+    else:
+        await state.queue.add_to_front(TrackRequest(tracks[0], ctx.author))
+        await ctx.send(f"{Icons.ADDED} Playing next: **{tracks[0].title}**", ephemeral=True)
+        
+    if not player.playing:
+        req = await bot.music_manager.get_next_track(state)
+        if req: await player.play(req.track)
+    await EmbedManager.update_status_message(bot, ctx.guild.id)
+
+@bot.hybrid_command(name="clearqueue", description="Remove all songs from the current queue.")
+@is_authorized(level=2)
+async def clearqueue(ctx: commands.Context):
+    state = bot.music_manager.get_state(ctx.guild.id)
+    await state.queue.clear()
+    await ctx.send(f"{Icons.SUCCESS} The queue has been completely cleared.", ephemeral=True)
+    await EmbedManager.update_status_message(bot, ctx.guild.id)
+
+@bot.hybrid_command(name="remove", description="Remove a specific song from the queue using its 5-letter ID.")
+@is_authorized(level=2)
+async def remove(ctx: commands.Context, uid: str):
+    state = bot.music_manager.get_state(ctx.guild.id)
+    removed = await state.queue.remove_by_uid(uid)
+    if removed:
+        await ctx.send(f"{Icons.SUCCESS} Removed track `[{removed.uid}]`: **{removed.track.title}**", ephemeral=True)
+        await EmbedManager.update_status_message(bot, ctx.guild.id)
+    else:
+        await ctx.send(f"{Icons.ERROR} Could not find a song with the ID `{uid.upper()}` in the queue.", ephemeral=True)
+
+@bot.hybrid_command(name="play", description="Play a song or playlist from a search or link.")
+@is_authorized(level=1000)
+async def play(ctx: commands.Context, *, query: str):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        return await ctx.send("You need to join a voice channel first.", ephemeral=True)
+    await ctx.defer(ephemeral=True)
+    
+    if bot.music_manager.spotify.is_spotify_url(query):
+        if not bot.music_manager.spotify.enabled: return await ctx.send("Spotify support not enabled.", ephemeral=True)
+        query = await bot.music_manager.spotify.resolve(query)
+
+    state = bot.music_manager.get_state(ctx.guild.id)
+    should_update = False
+    
+    async with state.playback_lock:
+        if not ctx.voice_client:
+            player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+            state.voice_channel_id = ctx.author.voice.channel.id
+            p_data = bot.persistence.load_persistence(ctx.guild.id)
+            p_data["voice_channel_id"] = state.voice_channel_id
+            bot.persistence.save_persistence(ctx.guild.id, p_data)
+        else: player = ctx.voice_client
+
+        tracks = await wavelink.Playable.search(query)
+        if not tracks: return await ctx.send("Could not find any songs matching your search.", ephemeral=True)
+
+        if isinstance(tracks, wavelink.Playlist):
+            for track in tracks.tracks: await state.queue.enqueue(TrackRequest(track, ctx.author))
+            await ctx.send(f"{Icons.ADDED} Added playlist **{tracks.name}** to the queue.", ephemeral=True)
+        else:
+            await state.queue.enqueue(TrackRequest(tracks[0], ctx.author))
+            if player.playing: await ctx.send(f"{Icons.ADDED} Added to queue: **{tracks[0].title}**", ephemeral=True)
+            
+        if not player.playing:
+            next_req = await bot.music_manager.get_next_track(state)
+            if next_req:
+                player.autoplay = wavelink.AutoPlayMode.partial
+                await player.play(next_req.track)
+            should_update = True
+            
+    if should_update: await EmbedManager.update_status_message(bot, ctx.guild.id)
+
+@bot.hybrid_command(name="skip", description="Vote to skip the current song.")
+@is_authorized(level=1000)
+async def skip(ctx: commands.Context):
+    player = ctx.voice_client
+    if not player or not player.playing: return await ctx.send("Nothing is currently playing.", ephemeral=True)
+    
+    u_level = get_user_level(bot, ctx.author)
+    state = bot.music_manager.get_state(ctx.guild.id)
+    
+    # Levels 0 and 1 skip instantly. Everyone else relies on the vote threshold
+    if u_level <= 1:
+        state.skip_requested = True
+        await player.skip(force=True)
+        await ctx.send(f"{Icons.SKIP} An Admin skipped the song.", ephemeral=True)
+    else:
+        if not ctx.author.voice or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"{Icons.ERROR} You need to be in my voice channel to vote to skip!", ephemeral=True)
+            
+        state.skip_votes.add(ctx.author.id)
+        listeners = len([m for m in ctx.guild.me.voice.channel.members if not m.bot])
+        settings = bot.persistence.load_settings(ctx.guild.id)
+        pct = settings.get("vote_percentage", 75)
+        required = max(1, math.ceil(listeners * (pct / 100)))
+        
+        if len(state.skip_votes) >= required:
+            state.skip_requested = True
+            await player.skip(force=True)
+            await ctx.send(f"{Icons.SKIP} Enough votes reached ({len(state.skip_votes)}/{required}). Skipping!")
+        else:
+            await ctx.send(f"Voted to skip! ({len(state.skip_votes)}/{required} votes needed).", ephemeral=True)
+
+@bot.hybrid_command(name="queue", description="Show the list of songs waiting to play.")
+@is_authorized(level=1000)
+async def queue_cmd(ctx: commands.Context):
+    state = bot.music_manager.get_state(ctx.guild.id)
+    queue_list = await state.queue.get_all()
+    if not queue_list: return await ctx.send(f"{Icons.EMPTY} The queue is empty.", ephemeral=True)
+    
+    is_ephemeral = ctx.interaction is not None
+    view = QueuePaginator(queue_list, is_ephemeral=is_ephemeral)
+    
+    if is_ephemeral:
+        await ctx.send(embed=view.generate_embed(), view=view, ephemeral=True)
+    else:
+        await ctx.send(embed=view.generate_embed(), view=view, delete_after=60.0)
+
+@bot.hybrid_command(name="shuffle", description="Turn queue shuffling on or off.")
+@is_authorized(level=2)
+async def shuffle(ctx: commands.Context):
+    state = bot.music_manager.get_state(ctx.guild.id)
+    async with state.playback_lock:
+        state.shuffle_enabled = not state.shuffle_enabled
+        if state.shuffle_enabled: await state.queue.shuffle()
+    await EmbedManager.update_status_message(bot, ctx.guild.id)
+    await ctx.send(f"{Icons.SHUFFLE} Shuffle set to **{'ON' if state.shuffle_enabled else 'OFF'}**.", ephemeral=True)
+
+@bot.hybrid_command(name="autoplay", description="Toggle automatic playback of similar songs.")
+@is_authorized(level=2)
+async def autoplay(ctx: commands.Context):
+    player: wavelink.Player = ctx.voice_client
+    if not player:
+        return await ctx.send("I need to be playing music before you can enable autoplay!", ephemeral=True)
+    
+    state = bot.music_manager.get_state(ctx.guild.id)
+    async with state.playback_lock:
+        state.autoplay_enabled = not state.autoplay_enabled
+        if state.autoplay_enabled:
+            state.loop_mode = "off"
+            
+        if state.queue.is_empty:
+            if state.autoplay_enabled:
+                player.autoplay = wavelink.AutoPlayMode.enabled
+            else:
+                player.autoplay = wavelink.AutoPlayMode.partial
+                
+    await EmbedManager.update_status_message(bot, ctx.guild.id)
+    await ctx.send(f"{Icons.AUTOPLAY} Autoplay is now **{'ON' if state.autoplay_enabled else 'OFF'}**.", ephemeral=True)
+
+@bot.hybrid_command(name="loop", description="Change the loop mode to off, playlist, or song.")
+@is_authorized(level=2)
+@app_commands.choices(mode=[
+    app_commands.Choice(name="Off", value="off"),
+    app_commands.Choice(name="Playlist", value="playlist"),
+    app_commands.Choice(name="Song", value="song")
+])
+async def loop_cmd(ctx: commands.Context, mode: str):
+    if hasattr(mode, 'value'):
+        mode = mode.value
+        
+    state = bot.music_manager.get_state(ctx.guild.id)
+    async with state.playback_lock:
+        state.loop_mode = mode
+        if mode != "off":
+            state.autoplay_enabled = False
+            player = ctx.voice_client
+            if player:
+                player.autoplay = wavelink.AutoPlayMode.partial
+                
+    await EmbedManager.update_status_message(bot, ctx.guild.id)
+    await ctx.send(f"{Icons.SUCCESS} Loop mode set to **{mode.capitalize()}**.", ephemeral=True)
+
+@bot.hybrid_command(name="lyrics", description="Fetch lyrics for the current song or search for a specific one.")
+@is_authorized(level=1000)
+async def lyrics_cmd(ctx: commands.Context, *, query: Optional[str] = None):
+    # This command uses an explicit ephemeral=False, so it is never ephemeral.
+    await ctx.defer(ephemeral=False)
+    
+    if not query:
+        player: wavelink.Player = ctx.voice_client
+        if not player or not player.current:
+            return await ctx.send(f"{Icons.ERROR} There is no music playing right now. Please provide a song to search.", ephemeral=True)
+        query = f"{player.current.title} {player.current.author}"
+        
+    msg = await ctx.send(f"Looking up the lyrics for you, please wait a moment...")
+    
+    result = await bot.music_manager.lyrics.get_lyrics(query)
+    
+    if not result:
+        return await msg.edit(content=f"{Icons.EMPTY} I couldn't find lyrics for that track.")
+        
+    lyric_text, source = result
+    pages = chunk_text(lyric_text, 1500)
+    
+    # Explicitly False because the message deferred is public
+    view = LyricsPaginator(pages, title=f"Lyrics: {query}", source=source, is_ephemeral=False)
+    
+    await msg.edit(content=None, embed=view.generate_embed(), view=view)
+
+@bot.hybrid_command(name="filter", description="Change how the music sounds with fun audio presets.")
+@is_authorized(level=2)
+@app_commands.choices(preset=[
+    app_commands.Choice(name="Clear (Normal Studio Sound)", value="clear"),
+    app_commands.Choice(name="Bass Boost (Heavy Lows)", value="bassboost"),
+    app_commands.Choice(name="Nightcore (Fast & High)", value="nightcore"),
+    app_commands.Choice(name="8D (Spinning Audio)", value="8d"),
+    app_commands.Choice(name="Vaporwave (Slow & Deep)", value="vaporwave")
+])
+async def audio_filter(ctx: commands.Context, preset: str):
+    await ctx.defer(ephemeral=True)
+    
+    # Safely extract the choice value if invoked dynamically via Hybrid command
+    if hasattr(preset, 'value'):
+        preset = preset.value
+
+    player: wavelink.Player = ctx.voice_client
+    if not player:
+        return await ctx.send(f"{Icons.ERROR} I'm not playing music in a voice channel right now.")
+        
+    try:
+        filters: wavelink.Filters = player.filters
+        filters.reset()
+        
+        if preset == "bassboost":
+            # Wavelink 3.5.2 uses raw dictionaries for Equalizer bands
+            filters.equalizer.set(bands=[
+                {"band": 0, "gain": 0.8},
+                {"band": 1, "gain": 0.7},
+                {"band": 2, "gain": 0.5},
+                {"band": 3, "gain": 0.3},
+                {"band": 4, "gain": 0.1}
+            ])
+        elif preset == "nightcore":
+            filters.timescale.set(speed=1.25, pitch=1.25)
+        elif preset == "8d":
+            # Wavelink 3.5.2 explicitly recommends 0.2 for Rotation 
+            filters.rotation.set(rotation_hz=0.2)
+        elif preset == "vaporwave":
+            filters.timescale.set(speed=0.8, pitch=0.8)
+            
+        await player.set_filters(filters)
+        
+        preset_names = {
+            "clear": "Clear (Normal Studio Sound)",
+            "bassboost": "Bass Boost",
+            "nightcore": "Nightcore",
+            "8d": "8D Audio",
+            "vaporwave": "Vaporwave"
+        }
+        
+        await ctx.send(f"{Icons.SUCCESS} Audio filter applied: **{preset_names.get(preset, 'Clear')}**")
+    except Exception as e:
+        logger.error(f"Failed to apply audio filter '{preset}': {e}", exc_info=True)
+        await ctx.send(f"{Icons.ERROR} Something went wrong while applying the audio filter.")
+
+
+# ====================================
+# WAVELINK TRACK SYSTEM EVENTS
+# ====================================
+@bot.event
+async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
+    guild_id = payload.player.guild.id
+    p_data = bot.persistence.load_persistence(guild_id)
+    p_data["last_track"] = f"{payload.track.title} by {payload.track.author}"
+    bot.persistence.save_persistence(guild_id, p_data)
+    await EmbedManager.update_status_message(bot, guild_id)
+    EmbedManager.start_updater(bot, guild_id)
+    await update_rich_presence(bot)
 
 @bot.event
-async def on_ready():
-    global g_status_message, playback_controls, edit_queue, download_executor
+async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
+    if not payload.player or not payload.player.guild: return
+    guild_id = payload.player.guild.id
+    state = bot.music_manager.get_state(guild_id)
+    player = payload.player
 
-    if playback_controls is None:
-        playback_controls = PlaybackControls()
+    async with state.playback_lock:
+        if state.is_stopping:
+            await update_rich_presence(bot)
+            return
+            
+        is_skipped = getattr(state, "skip_requested", False)
+        state.skip_requested = False
+        
+        if state.loop_mode == "song" and state.current_track_req and not is_skipped:
+            # Single song loop: replay the exact same track request
+            next_req = state.current_track_req
+            await player.play(next_req.track)
+        else:
+            if state.loop_mode == "playlist" and state.current_track_req and not is_skipped:
+                # Playlist loop: append the finished song back to the very end of the queue
+                new_req = TrackRequest(track=state.current_track_req.track, requester=state.current_track_req.requester)
+                await state.queue.enqueue(new_req)
+                
+            next_req = await bot.music_manager.get_next_track(state)
+            if next_req:
+                player.autoplay = wavelink.AutoPlayMode.partial
+                await player.play(next_req.track)
+            else:
+                player.autoplay = wavelink.AutoPlayMode.enabled if state.autoplay_enabled else wavelink.AutoPlayMode.partial
 
-    if edit_queue is None:
-        edit_queue = asyncio.Queue()
+    await EmbedManager.update_status_message(bot, guild_id)
+    await update_rich_presence(bot)
 
-    if download_executor is None:
-        download_executor = ThreadPoolExecutor(max_workers=4)
+@bot.event
+async def on_wavelink_node_ready(payload: wavelink.NodeReadyEventPayload):
+    logger.info(f"Lavalink Node '{payload.node.identifier}' connection verified.")
+    
+@bot.event
+async def on_wavelink_websocket_closed(payload: wavelink.WebsocketClosedEventPayload):
+    if not payload.player or not payload.player.guild:
+        return
 
-    log.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
-    await bot.tree.sync()
-    log.info("Command tree synced.")
+    logger.warning(f"Voice WebSocket closed in guild {payload.player.guild.id}: Reason '{payload.reason}' (Code {payload.code})")
+    await update_rich_presence(bot)
 
-    status_channel = discord.utils.get(bot.guilds[0].text_channels, name="hikari") if bot.guilds else None
-    if status_channel:
-        message_id = None
-        try:
-            with open(STATUS_MESSAGE_ID_FILE, 'r') as f:
-                message_id = int(f.read())
-        except (FileNotFoundError, ValueError):
-            pass
-        if message_id:
-            try:
-                g_status_message = await status_channel.fetch_message(message_id)
-            except discord.NotFound:
-                message_id = None
-        if not message_id:
-            idle_embed = discord.Embed(title="Bot Initializing...", description="Please wait.", color=discord.Color.orange())
-            g_status_message = await status_channel.send(embed=idle_embed, view=playback_controls)
-            with open(STATUS_MESSAGE_ID_FILE, 'w') as f:
-                f.write(str(g_status_message.id))
-        await enqueue_edit(update_status_message)
-    else:
-        log.warning("Text channel 'hikari' not found. Status message feature disabled.")
 
-    for guild in bot.guilds:
-        general_vc = discord.utils.get(guild.voice_channels, name='General')
-        if general_vc:
-            try:
-                await general_vc.connect()
-            except Exception as e:
-                log.warning(f"Error joining 'General' voice channel: {e}")
-            break
-
-    # Start background tasks
-    refresh_seek_bar.start()
-    scheduled_sync.start()
-
-    # Start the edit queue processor as a background task
-    bot.loop.create_task(_edit_queue_processor())
-
-    # If autoplay state has a last played file and autoplay is enabled, optionally resume presence (no autoplay auto-play to avoid surprise)
-    if autoplay_state.get("last_played"):
-        log.info(f"Autoplay last played: {autoplay_state.get('last_played')}")
-
-# --- Run the Bot ---
-if __name__ == "__main__":
-    if not all([TOKEN, SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET]):
-        log.error("ERROR: Missing required environment variables in .env file.")
-    else:
-        try:
-            bot.run(TOKEN)
-        except Exception as e:
-            log.exception(f"Bot crashed: {e}")
+if __name__ == '__main__':
+    TOKEN = os.getenv('DISCORD_TOKEN')
+    if TOKEN: bot.run(TOKEN)
+    else: logger.error("No DISCORD_TOKEN found.")

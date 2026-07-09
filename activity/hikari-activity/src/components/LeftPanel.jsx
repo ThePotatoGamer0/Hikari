@@ -28,9 +28,11 @@ export default function LeftPanel({ status, onAction }) {
     );
   }
 
-  const artUrl = track.uri.includes('youtube.com') || track.uri.includes('youtu.be')
-    ? `https://img.youtube.com/vi/${track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop()}/maxresdefault.jpg`
-    : 'https://via.placeholder.com/500?text=No+Art';
+  let artUrl = null;
+  if (track.uri.includes('youtube.com') || track.uri.includes('youtu.be')) {
+    const videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
+    artUrl = `/yt-img/vi/${videoId}/maxresdefault.jpg`;
+  }
 
   const progressPct = track.length > 0 ? (localPos / track.length) * 100 : 0;
 
@@ -44,7 +46,13 @@ export default function LeftPanel({ status, onAction }) {
   return (
     <div className="left-panel">
       <div className="album-art-container">
-        <img src={artUrl} alt="Album Art" className="album-art" />
+        {artUrl ? (
+          <img src={artUrl} alt="Album Art" className="album-art" />
+        ) : (
+          <div className="album-art fallback">
+            {Icons.MusicNote}
+          </div>
+        )}
       </div>
       
       <div className="track-info">

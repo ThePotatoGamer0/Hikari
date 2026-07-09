@@ -123,3 +123,32 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
 .modal-actions { display: flex; gap: 1rem; justify-content: flex-end; }
 .btn-primary { padding: 0.8rem 1.5rem; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
 .btn-secondary { padding: 0.8rem 1.5rem; background: rgba(255,255,255,0.15); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+
+/* SYNCED LYRICS */
+.synced-lyrics-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 4rem 1rem;
+  text-align: center;
+}
+
+.lyric-line {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.3); /* Dim future lyrics */
+  transition: all 0.3s ease;
+  margin: 0;
+  cursor: default;
+}
+
+.lyric-line.active {
+  color: #ffffff; /* Bright white for current lyric */
+  font-size: 2rem;
+  text-shadow: 0 4px 15px rgba(255, 255, 255, 0.4);
+  transform: scale(1.05);
+}
+
+.lyric-line.passed {
+  color: rgba(255, 255, 255, 0.15); /* heavily dim past lyrics */
+}

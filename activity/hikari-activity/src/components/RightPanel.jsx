@@ -9,10 +9,10 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
   const [lyricsStatus, setLyricsStatus] = useState("Loading...");
   const [localPos, setLocalPos] = useState(0);
   
-  // Restored: Offset state
+  // Offset state
   const [lyricOffset, setLyricOffset] = useState(0);
   
-  // New: Scroll lock state
+  // Scroll lock state
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   
   const scrollRef = useRef(null);
@@ -37,7 +37,6 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
     const fetchSyncedLyrics = async () => {
       setLyricsStatus("Searching LRClib...");
       setLyricsData([]);
-      // Reset scroll lock and offset on new track
       setIsAutoScroll(true);
       setLyricOffset(0);
       
@@ -78,12 +77,20 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
     fetchSyncedLyrics();
   }, [activeTab, track?.title]);
 
-  // 3. Auto-scroll logic (Only runs if isAutoScroll is true)
+  // 3. FIXED: Isolated Auto-scroll logic
   useEffect(() => {
     if (activeTab === 'lyrics' && scrollRef.current && isAutoScroll) {
       const activeElement = scrollRef.current.querySelector('.lyric-line.active');
-      if (activeElement) {
-        activeElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const container = scrollRef.current;
+      
+      if (activeElement && container) {
+        // Calculate exact center relative to the scroll container ONLY
+        const targetScroll = activeElement.offsetTop - (container.offsetHeight / 2) + (activeElement.offsetHeight / 2);
+        
+        container.scrollTo({
+          top: targetScroll,
+          behavior: 'smooth'
+        });
       }
     }
   }, [localPos, activeTab, isAutoScroll, lyricOffset]);
@@ -148,7 +155,7 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
           <div className="synced-lyrics-container">
             {lyricsStatus && <div className="empty-state">{lyricsStatus}</div>}
             
-            {/* Restored Offset Controls */}
+            {/* Offset Controls */}
             {lyricsData.length > 0 && (
               <div className="lyrics-offset-controls">
                 <button onClick={() => setLyricOffset(prev => prev + 1)}>▲</button>
@@ -158,7 +165,6 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
             )}
             
             {lyricsData.map((line, i) => {
-              // Calculate using the offset-adjusted time
               const isPast = adjustedPos >= line.time;
               const isBeforeNext = !lyricsData[i + 1] || adjustedPos < lyricsData[i + 1].time;
               const isActive = isPast && isBeforeNext;
@@ -182,7 +188,7 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
         </button>
       )}
 
-      {/* New Resume Sync Button */}
+      {/* Resume Sync Button */}
       {activeTab === 'lyrics' && !isAutoScroll && lyricsData.length > 0 && (
         <button 
           className="resume-sync-btn" 

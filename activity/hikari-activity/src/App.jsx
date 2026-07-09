@@ -12,7 +12,7 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   
-  // NEW: State to track if the app is focused (0) or in miniplayer PIP (1)
+  // Track layout mode: 0 (Focused), 1 (PIP), 2 (Grid)
   const [layoutMode, setLayoutMode] = useState(0); 
   
   const pollInterval = useRef(null);
@@ -28,7 +28,7 @@ export default function App() {
           console.error("Not in a server voice channel!");
         }
 
-        // --- NEW: Subscribe to PIP/Layout changes ---
+        // Subscribe to PIP/Layout changes
         discordSdk.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', ({ layout_mode }) => {
           setLayoutMode(layout_mode);
         });
@@ -124,16 +124,16 @@ export default function App() {
         />
       )}
       
-      {/* Pass the PIP state down so the LeftPanel knows to hide text/controls */}
+      {/* Trigger miniplayer if the layout is ANYTHING other than 0 (Focused) */}
       <LeftPanel 
         status={status} 
         onAction={handleAction} 
         artUrl={artUrl} 
-        isPip={layoutMode === 1} 
+        isPip={layoutMode !== 0} 
       />
       
-      {/* Completely unmount the RightPanel and Modals if we are in the tiny PIP view */}
-      {layoutMode !== 1 && (
+      {/* Only mount the RightPanel and Modals if we are fully focused */}
+      {layoutMode === 0 && (
         <>
           <RightPanel 
             status={status} 

@@ -8,17 +8,23 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
   const [lyricsData, setLyricsData] = useState([]);
   const [lyricsStatus, setLyricsStatus] = useState("Loading...");
   const [localPos, setLocalPos] = useState(0);
+  
+  // Restored: Offset state
+  const [lyricOffset, setLyricOffset] = useState(0);
+  
+  // New: Scroll lock state
+  const [isAutoScroll, setIsAutoScroll] = useState(true);
+  
   const scrollRef = useRef(null);
-
   const track = status?.current_track;
 
-  // 1. Keep track of the current song time for the lyrics sync
+  // 1. Keep track of the current song time
   useEffect(() => {
     if (!track || track.is_paused || activeTab !== 'lyrics') return;
     setLocalPos(track.position);
     
     const ticker = setInterval(() => {
-      setLocalPos((prev) => Math.min(prev + 100, track.length)); // 100ms updates for smooth lyric syncing
+      setLocalPos((prev) => Math.min(prev + 100, track.length));
     }, 100);
     
     return () => clearInterval(ticker);
@@ -31,29 +37,26 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
     const fetchSyncedLyrics = async () => {
       setLyricsStatus("Searching LRClib...");
       setLyricsData([]);
+      // Reset scroll lock and offset on new track
+      setIsAutoScroll(true);
+      setLyricOffset(0);
       
       try {
-        // Clean up common YouTube garbage from titles for better search results
         const cleanTitle = track.title.replace(/(\(Official.*\)|\(Lyric.*\)|\(Music Video\)|ft\..*)/gi, '').trim();
         const query = encodeURIComponent(`${cleanTitle} ${track.author}`);
         
-        // Use our new Discord Proxy path!
         const res = await fetch(`/lrclib/api/search?q=${query}`);
         if (!res.ok) throw new Error("API Error");
         
         const data = await res.json();
-        
-        // Find the first result that actually has synced lyrics
         const bestMatch = data.find(song => song.syncedLyrics);
 
         if (bestMatch) {
-          // Parse the LRC string into an array of { time: ms, text: string }
           const parsed = bestMatch.syncedLyrics.split('\n').map(line => {
             const match = line.match(/^\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/);
             if (match) {
               const minutes = parseInt(match[1], 10);
               const seconds = parseInt(match[2], 10);
-              // Handle both 2-digit and 3-digit milliseconds
               const ms = parseInt(match[3].padEnd(3, '0'), 10);
               const time = (minutes * 60 * 1000) + (seconds * 1000) + ms;
               return { time, text: match[4].trim() || '♪' };
@@ -75,16 +78,23 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
     fetchSyncedLyrics();
   }, [activeTab, track?.title]);
 
-  // 3. Auto-scroll logic
+  // 3. Auto-scroll logic (Only runs if isAutoScroll is true)
   useEffect(() => {
-    if (activeTab === 'lyrics' && scrollRef.current) {
-      // Find the currently active element and scroll it to the center
+    if (activeTab === 'lyrics' && scrollRef.current && isAutoScroll) {
       const activeElement = scrollRef.current.querySelector('.lyric-line.active');
       if (activeElement) {
         activeElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
-  }, [localPos, activeTab]);
+  }, [localPos, activeTab, isAutoScroll, lyricOffset]);
+
+  // Disable auto-scroll if the user manually interacts with the lyric container
+  const handleUserInteraction = () => {
+    if (isAutoScroll) setIsAutoScroll(false);
+  };
+
+  // Adjusted time includes the user's manual offset (in milliseconds)
+  const adjustedPos = localPos + (lyricOffset * 1000);
 
   return (
     <div className="right-panel">
@@ -103,7 +113,13 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
         </button>
       </div>
 
-      <div className="tab-content" ref={scrollRef}>
+      <div 
+        className="tab-content" 
+        ref={scrollRef}
+        onWheel={handleUserInteraction}
+        onTouchMove={handleUserInteraction}
+        onMouseDown={handleUserInteraction}
+      >
         {activeTab === 'queue' && (
           <div className="queue-list">
             {(status?.queue || []).length === 0 ? (
@@ -132,11 +148,19 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
           <div className="synced-lyrics-container">
             {lyricsStatus && <div className="empty-state">{lyricsStatus}</div>}
             
+            {/* Restored Offset Controls */}
+            {lyricsData.length > 0 && (
+              <div className="lyrics-offset-controls">
+                <button onClick={() => setLyricOffset(prev => prev + 1)}>▲</button>
+                <span>{lyricOffset > 0 ? `+${lyricOffset}` : lyricOffset}s</span>
+                <button onClick={() => setLyricOffset(prev => prev - 1)}>▼</button>
+              </div>
+            )}
+            
             {lyricsData.map((line, i) => {
-              // A line is active if the current time is past its timestamp, 
-              // AND we haven't reached the NEXT line's timestamp yet.
-              const isPast = localPos >= line.time;
-              const isBeforeNext = !lyricsData[i + 1] || localPos < lyricsData[i + 1].time;
+              // Calculate using the offset-adjusted time
+              const isPast = adjustedPos >= line.time;
+              const isBeforeNext = !lyricsData[i + 1] || adjustedPos < lyricsData[i + 1].time;
               const isActive = isPast && isBeforeNext;
 
               return (
@@ -155,6 +179,16 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
       {activeTab === 'queue' && (
         <button className="fab-add" onClick={openModal}>
           {Icons.Plus}
+        </button>
+      )}
+
+      {/* New Resume Sync Button */}
+      {activeTab === 'lyrics' && !isAutoScroll && lyricsData.length > 0 && (
+        <button 
+          className="resume-sync-btn" 
+          onClick={() => setIsAutoScroll(true)}
+        >
+          Resume Sync
         </button>
       )}
     </div>

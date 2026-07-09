@@ -1,5 +1,8 @@
-import { useState, useEffect } from 'react';
-import Icons from './Icons';
+import { useEffect, useState, useRef } from 'react';
+import { DiscordSDK } from '@discord/embedded-app-sdk';
+import LeftPanel from './components/LeftPanel';
+import RightPanel from './components/RightPanel';
+import SearchModal from './components/SearchModal';
 
 export default function LeftPanel({ status, onAction }) {
   const [localPos, setLocalPos] = useState(0);

@@ -1,88 +1,109 @@
-import { useEffect, useState, useRef } from 'react';
-import { DiscordSDK } from '@discord/embedded-app-sdk';
-import LeftPanel from './components/LeftPanel';
-import RightPanel from './components/RightPanel';
-import SearchModal from './components/SearchModal';
+import { useState, useEffect } from 'react';
+import Icons from './Icons';
 
-const discordSdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
+export default function LeftPanel({ status, onAction }) {
+  const [localPos, setLocalPos] = useState(0);
 
-export default function App() {
-  const [guildId, setGuildId] = useState(null);
-  const [status, setStatus] = useState(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const pollInterval = useRef(null);
+  const track = status?.current_track;
 
+  // Local seekbar tick
   useEffect(() => {
-    async function setupDiscord() {
-      try {
-        await discordSdk.ready();
-        
-        if (discordSdk.guildId) {
-          setGuildId(discordSdk.guildId);
-        } else {
-          console.error("Not in a server voice channel!");
-        }
-      } catch (err) {
-        console.error("Failed to initialize Discord SDK:", err);
-      }
-    }
-    setupDiscord();
-  }, []);
+    if (!track || track.is_paused) return;
+    setLocalPos(track.position);
+    
+    const ticker = setInterval(() => {
+      setLocalPos((prev) => Math.min(prev + 1000, track.length));
+    }, 1000);
+    
+    return () => clearInterval(ticker);
+  }, [track]);
 
-  useEffect(() => {
-    if (!guildId) return;
-
-    const fetchStatus = async () => {
-      try {
-        // Request uses the relative proxy path instead of an absolute URL
-        const res = await fetch(`/api/status/${guildId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setStatus(data);
-        }
-      } catch (err) {
-        console.error("Failed to fetch status", err);
-      }
-    };
-
-    fetchStatus();
-    pollInterval.current = setInterval(fetchStatus, 2000);
-
-    return () => clearInterval(pollInterval.current);
-  }, [guildId]);
-
-  const handleAction = async (endpoint, payload = {}) => {
-    if (!guildId) return;
-    try {
-      // Request uses the relative proxy path instead of an absolute URL
-      await fetch(`/api/${endpoint}?guild_id=${guildId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined
-      });
-    } catch (e) {
-      console.error(`Failed action: ${endpoint}`, e);
-    }
-  };
-
-  if (!guildId) {
-    return <div className="loading">Connecting to Voice Channel...</div>;
+  if (!track) {
+    return (
+      <div className="left-panel empty">
+        {Icons.MusicNote}
+        <h2>No music playing</h2>
+        <p>Add a song to get started.</p>
+      </div>
+    );
   }
 
+  // Use the proxy path mapping /yt-img to bypass Discord's CSP restrictions
+  let artUrl = null;
+  if (track.uri.includes('youtube.com') || track.uri.includes('youtu.be')) {
+    const videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
+    artUrl = `/yt-img/vi/${videoId}/maxresdefault.jpg`;
+  }
+
+  const progressPct = track.length > 0 ? (localPos / track.length) * 100 : 0;
+
+  const formatTime = (ms) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
   return (
-    <div className="app-container">
-      <LeftPanel status={status} onAction={handleAction} />
-      <RightPanel 
-        status={status} 
-        onAction={handleAction} 
-        openModal={() => setIsModalOpen(true)} 
-        guildId={guildId}
-      />
-      <SearchModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        onAction={handleAction} 
-      />
+    <div className="left-panel">
+      <div className="album-art-container">
+        {artUrl ? (
+          <img src={artUrl} alt="Album Art" className="album-art" />
+        ) : (
+          <div className="album-art fallback">
+            {Icons.MusicNote}
+          </div>
+        )}
+      </div>
+      
+      <div className="track-info">
+        <h1 className="title">{track.title}</h1>
+        <h2 className="author">{track.author}</h2>
+      </div>
+
+      <div className="seekbar-container">
+        <div className="seekbar-bg">
+          <div className="seekbar-fill" style={{ width: `${progressPct}%` }}></div>
+        </div>
+        <div className="time-labels">
+          <span>{formatTime(localPos)}</span>
+          <span>{formatTime(track.length)}</span>
+        </div>
+      </div>
+
+      <div className="controls-row">
+        <button 
+          className={`control-btn ${status?.shuffle ? 'active' : ''}`} 
+          onClick={() => onAction('shuffle')}
+        >
+          {Icons.Shuffle}
+        </button>
+
+        <button className="control-btn" onClick={() => onAction('stop')}>
+          {Icons.Stop}
+        </button>
+
+        <button className="control-btn main-play" onClick={() => onAction('skip')}>
+          {Icons.Skip}
+        </button>
+
+        <button 
+          className={`control-btn ${status?.loop_mode !== 'off' ? 'active' : ''}`} 
+          onClick={() => {
+            const nextMode = status?.loop_mode === 'off' ? 'playlist' : status?.loop_mode === 'playlist' ? 'song' : 'off';
+            onAction('loop', { mode: nextMode });
+          }}
+        >
+          {status?.loop_mode === 'song' ? Icons.RepeatOne : Icons.Repeat}
+        </button>
+
+        <button 
+          className={`control-btn ${status?.autoplay ? 'active' : ''}`} 
+          onClick={() => onAction('autoplay')}
+        >
+          {Icons.Infinity}
+        </button>
+      </div>
     </div>
   );
 }

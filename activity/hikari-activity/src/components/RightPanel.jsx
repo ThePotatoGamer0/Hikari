@@ -1,42 +1,34 @@
 import { useState, useEffect, useRef } from 'react';
 import Icons from './Icons';
 
-// --- UPDATED: Universal Metadata Sanitizer ---
 const sanitizeMetadata = (rawTitle, rawAuthor) => {
   let author = rawAuthor || "Unknown";
   let title = rawTitle || "Unknown";
 
-  // 1. Clean the Author name (Remove 'Official', 'VEVO', '- Topic')
   author = author
     .replace(/^Official\s+/i, '')
     .replace(/VEVO$/i, '')
     .replace(/\s*-\s*Topic$/i, '')
     .trim();
 
-  // 2. Clean the Title (Remove bracketed fluff, and 'ft. ...')
   title = title
     .replace(/[\[\(]?(Official|Audio|Lyric|Music Video|Visualizer|HD|HQ).*?([\]\)]|$)/gi, '')
     .replace(/\s+(ft\.|feat\.|featuring).*$/gi, '')
     .trim();
 
-  // 3. The Re-uploader Fix: Handle "Artist - Title" format
   if (title.includes(' - ')) {
     const parts = title.split(' - ');
     const leftSide = parts[0].trim();
     const rightSide = parts.slice(1).join(' - ').trim();
 
-    // If the uploader's channel name matches the left side, they are the real artist.
     if (leftSide.toLowerCase().includes(author.toLowerCase()) || author.toLowerCase().includes(leftSide.toLowerCase())) {
       title = rightSide;
-    } 
-    // If they don't match, the uploader is likely a random channel, and the left side is the true artist.
-    else {
+    } else {
       author = leftSide;
       title = rightSide;
     }
   }
 
-  // 4. Final trim of leftover dashes or spaces
   title = title.replace(/^[-~]\s*/, '').replace(/\s*[-~]$/, '').trim();
 
   return { cleanTitle: title, cleanAuthor: author };
@@ -45,33 +37,27 @@ const sanitizeMetadata = (rawTitle, rawAuthor) => {
 export default function RightPanel({ status, onAction, openModal, guildId }) {
   const [activeTab, setActiveTab] = useState('queue');
   
-  // Lyrics State
+  // NEW: Search state for the queue filter
+  const [queueSearch, setQueueSearch] = useState('');
+  
   const [lyricsData, setLyricsData] = useState([]);
   const [lyricsStatus, setLyricsStatus] = useState("Loading...");
   const [localPos, setLocalPos] = useState(0);
-  
-  // Offset state
   const [lyricOffset, setLyricOffset] = useState(0);
-  
-  // Scroll lock state
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   
   const scrollRef = useRef(null);
   const track = status?.current_track;
 
-  // 1. Keep track of the current song time
   useEffect(() => {
     if (!track || track.is_paused || activeTab !== 'lyrics') return;
     setLocalPos(track.position);
-    
     const ticker = setInterval(() => {
       setLocalPos((prev) => Math.min(prev + 100, track.length));
     }, 100);
-    
     return () => clearInterval(ticker);
   }, [track, activeTab]);
 
-  // 2. Fetch and Parse LRClib data
   useEffect(() => {
     if (activeTab !== 'lyrics' || !track) return;
 
@@ -82,7 +68,6 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
       setLyricOffset(0);
       
       try {
-        // Use our new sanitizer so LRClib gets a crystal clear search query!
         const { cleanTitle, cleanAuthor } = sanitizeMetadata(track.title, track.author);
         const query = encodeURIComponent(`${cleanTitle} ${cleanAuthor}`);
         
@@ -119,7 +104,6 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
     fetchSyncedLyrics();
   }, [activeTab, track?.title]);
 
-  // 3. Isolated Auto-scroll logic
   useEffect(() => {
     if (activeTab === 'lyrics' && scrollRef.current && isAutoScroll) {
       const activeElement = scrollRef.current.querySelector('.lyric-line.active');
@@ -127,11 +111,7 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
       
       if (activeElement && container) {
         const targetScroll = activeElement.offsetTop - (container.offsetHeight / 2) + (activeElement.offsetHeight / 2);
-        
-        container.scrollTo({
-          top: targetScroll,
-          behavior: 'smooth'
-        });
+        container.scrollTo({ top: targetScroll, behavior: 'smooth' });
       }
     }
   }, [localPos, activeTab, isAutoScroll, lyricOffset]);
@@ -141,6 +121,19 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
   };
 
   const adjustedPos = localPos + (lyricOffset * 1000);
+
+  // --- NEW: Queue Filtering Logic ---
+  const rawQueue = status?.queue || [];
+  
+  // Attach the original index so filtering doesn't mess up the track numbers
+  const queueWithIndexes = rawQueue.map((t, index) => ({ ...t, originalIndex: index + 1 }));
+  
+  const filteredQueue = queueWithIndexes.filter(queueTrack => {
+    if (!queueSearch) return true;
+    const { cleanTitle, cleanAuthor } = sanitizeMetadata(queueTrack.title, queueTrack.author);
+    const query = queueSearch.toLowerCase();
+    return cleanTitle.toLowerCase().includes(query) || cleanAuthor.toLowerCase().includes(query);
+  });
 
   return (
     <div className="right-panel">
@@ -167,31 +160,48 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
         onMouseDown={handleUserInteraction}
       >
         {activeTab === 'queue' && (
-          <div className="queue-list">
-            {(status?.queue || []).length === 0 ? (
-              <div className="empty-state">Queue is empty</div>
-            ) : (
-              status.queue.map((queueTrack, i) => {
-                // Sanitize every track in the queue!
-                const { cleanTitle, cleanAuthor } = sanitizeMetadata(queueTrack.title, queueTrack.author);
-                
-                return (
-                  <div key={queueTrack.uid} className="queue-item">
-                    <span className="queue-index">{i + 1}</span>
-                    <div className="queue-meta">
-                      <span className="queue-title">{cleanTitle}</span>
-                      <span className="queue-author">{cleanAuthor}</span>
-                    </div>
-                    <div className="queue-actions">
-                      <span className="queue-requester">{queueTrack.requester.split('#')[0]}</span>
-                      <button className="remove-btn" onClick={() => onAction('remove', { uid: queueTrack.uid })}>
-                        {Icons.Trash}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
+          <div className="queue-tab-wrapper">
+            
+            {/* The new inline search bar (only shows if there are songs in the queue) */}
+            {rawQueue.length > 0 && (
+              <div className="queue-search-wrapper">
+                <input 
+                  type="text"
+                  className="queue-search-input"
+                  placeholder="Filter queue..."
+                  value={queueSearch}
+                  onChange={(e) => setQueueSearch(e.target.value)}
+                />
+              </div>
             )}
+
+            <div className="queue-list">
+              {rawQueue.length === 0 ? (
+                <div className="empty-state">Queue is empty</div>
+              ) : filteredQueue.length === 0 ? (
+                <div className="empty-state">No matching songs found</div>
+              ) : (
+                filteredQueue.map((queueTrack) => {
+                  const { cleanTitle, cleanAuthor } = sanitizeMetadata(queueTrack.title, queueTrack.author);
+                  
+                  return (
+                    <div key={queueTrack.uid} className="queue-item">
+                      <span className="queue-index">{queueTrack.originalIndex}</span>
+                      <div className="queue-meta">
+                        <span className="queue-title">{cleanTitle}</span>
+                        <span className="queue-author">{cleanAuthor}</span>
+                      </div>
+                      <div className="queue-actions">
+                        <span className="queue-requester">{queueTrack.requester.split('#')[0]}</span>
+                        <button className="remove-btn" onClick={() => onAction('remove', { uid: queueTrack.uid })}>
+                          {Icons.Trash}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         )}
 

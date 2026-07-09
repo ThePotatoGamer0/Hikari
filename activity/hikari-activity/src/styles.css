@@ -193,3 +193,72 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   background: rgba(88, 101, 242, 1);
   transform: translateX(-50%) scale(1.05);
 }
+
+/* =========================================
+   MOBILE RESPONSIVENESS
+   ========================================= */
+@media (max-width: 768px) {
+  /* Stack the panels vertically and allow scrolling */
+  .app-container {
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  /* Make the background stretch the full scrolled height */
+  .blurred-background {
+    height: 200%; 
+    position: fixed; /* Keep the blur stationary while scrolling */
+  }
+
+  /* LEFT PANEL: Take up the full first screen */
+  .left-panel {
+    flex: none;
+    width: 100%;
+    min-height: 100vh; 
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 2rem 1rem;
+  }
+
+  .album-art-container {
+    max-width: 300px; /* slightly smaller on phones */
+  }
+
+  /* RIGHT PANEL: Sits right below the player */
+  .right-panel {
+    flex: none;
+    width: 100%;
+    min-height: 100vh; 
+  }
+
+  .tab-content {
+    padding: 1rem;
+  }
+
+  /* FIX: Touch screens don't have "hover", so we must make hidden actions visible */
+  .remove-btn {
+    opacity: 1; 
+  }
+
+  /* Adjust the Sync Resume button for mobile */
+  @keyframes slideDownPillMobile {
+    0% { top: 3.5rem; opacity: 0; transform: translateX(-50%) scale(0.9); }
+    100% { top: 5rem; opacity: 1; transform: translateX(-50%) scale(1); }
+  }
+  
+  .resume-sync-btn {
+    animation: slideDownPillMobile 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+
+  /* Make the search modal fit mobile screens */
+  .search-modal {
+    width: 100%;
+  }
+  .modal-body {
+    padding: 1rem;
+  }
+  .search-input {
+    font-size: 1rem; /* Prevent iOS from auto-zooming on input focus */
+  }
+}

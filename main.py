@@ -1086,9 +1086,10 @@ class MusicBot(commands.Bot):
         self.api_runner = web.AppRunner(app)
         await self.api_runner.setup()
         port = int(os.getenv("API_PORT", 8080))
-        site = web.TCPSite(self.api_runner, '0.0.0.0', port)
+        name = os.getenv("API_NAME", '0.0.0.0')
+        site = web.TCPSite(self.api_runner, name, port)
         await site.start()
-        logger.info(f"API Server listening on port {port}")
+        logger.info(f"API Server listening on {name}:{port}")
 
     async def get_api_data(self, request: web.Request) -> dict:
         """Extracts JSON body or query parameters dynamically."""

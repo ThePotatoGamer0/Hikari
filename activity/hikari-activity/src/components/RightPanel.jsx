@@ -12,7 +12,9 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
     const fetchLyrics = async () => {
       setLyricsData({ text: "Searching for lyrics...", source: "" });
       try {
-        const res = await fetch(`${import.meta.env.VITE_BOT_API_URL}/api/lyrics?guild_id=${guildId}`);
+        // CHANGED: Now uses the relative proxy path instead of the full external URL
+        const res = await fetch(`/api/lyrics?guild_id=${guildId}`);
+        
         if (res.ok) {
           const data = await res.json();
           setLyricsData({ text: data.lyrics, source: data.source });

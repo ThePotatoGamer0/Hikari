@@ -5,10 +5,8 @@ import RightPanel from './components/RightPanel';
 import SearchModal from './components/SearchModal';
 
 const discordSdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
-const API_BASE = import.meta.env.VITE_BOT_API_URL;
 
 export default function App() {
-  const [auth, setAuth] = useState(null);
   const [guildId, setGuildId] = useState(null);
   const [status, setStatus] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -17,10 +15,8 @@ export default function App() {
   useEffect(() => {
     async function setupDiscord() {
       try {
-        // 1. Tell Discord the iframe is ready
         await discordSdk.ready();
         
-        // 2. Grab the guildId immediately without forcing a user login
         if (discordSdk.guildId) {
           setGuildId(discordSdk.guildId);
         } else {
@@ -38,7 +34,8 @@ export default function App() {
 
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/status/${guildId}`);
+        // Request uses the relative proxy path instead of an absolute URL
+        const res = await fetch(`/api/status/${guildId}`);
         if (res.ok) {
           const data = await res.json();
           setStatus(data);
@@ -57,7 +54,8 @@ export default function App() {
   const handleAction = async (endpoint, payload = {}) => {
     if (!guildId) return;
     try {
-      await fetch(`${API_BASE}/api/${endpoint}?guild_id=${guildId}`, {
+      // Request uses the relative proxy path instead of an absolute URL
+      await fetch(`/api/${endpoint}?guild_id=${guildId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined

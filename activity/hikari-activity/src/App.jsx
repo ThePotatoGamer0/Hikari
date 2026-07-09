@@ -15,6 +15,9 @@ export default function App() {
   // Track layout mode: 0 (Focused), 1 (PIP), 2 (Grid)
   const [layoutMode, setLayoutMode] = useState(0); 
   
+  // NEW: State to hold the asynchronously fetched SC artwork
+  const [scArtUrl, setScArtUrl] = useState(null);
+  
   const pollInterval = useRef(null);
 
   useEffect(() => {
@@ -28,12 +31,10 @@ export default function App() {
           console.error("Not in a server voice channel!");
         }
 
-        // Subscribe to PIP/Layout changes
         discordSdk.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', ({ layout_mode }) => {
           setLayoutMode(layout_mode);
         });
 
-        // 1. Prompt the user to authorize the app
         const { code } = await discordSdk.commands.authorize({
           client_id: import.meta.env.VITE_DISCORD_CLIENT_ID,
           response_type: 'code',
@@ -42,7 +43,6 @@ export default function App() {
           scope: ['identify']
         });
 
-        // 2. Ask backend for token
         const tokenRes = await fetch('/api/token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -50,10 +50,7 @@ export default function App() {
         });
         const { access_token } = await tokenRes.json();
 
-        // 3. Authenticate
         const auth = await discordSdk.commands.authenticate({ access_token });
-        
-        // 4. Save user
         setCurrentUser(auth.user);
 
       } catch (err) {
@@ -84,6 +81,43 @@ export default function App() {
     return () => clearInterval(pollInterval.current);
   }, [guildId]);
 
+  // --- NEW: Fetch SoundCloud Artwork ---
+  useEffect(() => {
+    const track = status?.current_track;
+    
+    // If it's not a SC track, wipe the state and ignore
+    if (!track || !track.uri.includes('soundcloud.com')) {
+      setScArtUrl(null);
+      return;
+    }
+
+    const fetchSoundcloudArt = async () => {
+      try {
+        // Ask SoundCloud for the track data using our new API proxy
+        const res = await fetch(`/sc-api/oembed?format=json&url=${encodeURIComponent(track.uri)}`);
+        
+        if (res.ok) {
+          const data = await res.json();
+          if (data.thumbnail_url) {
+            // SC gives us a full URL (e.g., https://i1.sndcdn.com/artworks-123.jpg)
+            // We just extract the path and route it through our Discord Image Proxy
+            const urlObj = new URL(data.thumbnail_url);
+            let proxyPath = `/sc-img${urlObj.pathname}`;
+            
+            // Force the API to give us the high-res 500x500 image instead of the blurry thumbnail
+            proxyPath = proxyPath.replace('-t400x400.jpg', '-t500x500.jpg').replace('-large.jpg', '-t500x500.jpg');
+            
+            setScArtUrl(proxyPath);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch SoundCloud art", e);
+      }
+    };
+
+    fetchSoundcloudArt();
+  }, [status?.current_track?.uri]); // Only re-run this if the URI actually changes
+
   const handleAction = async (endpoint, payload = {}) => {
     if (!guildId) return;
     
@@ -110,9 +144,16 @@ export default function App() {
 
   const track = status?.current_track;
   let artUrl = null;
-  if (track && (track.uri.includes('youtube.com') || track.uri.includes('youtu.be'))) {
-    const videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
-    artUrl = `/yt-img/vi/${videoId}/maxresdefault.jpg`;
+  
+  // --- UPDATED: Merge YouTube and SoundCloud logic ---
+  if (track) {
+    if (track.uri.includes('youtube.com') || track.uri.includes('youtu.be')) {
+      const videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
+      artUrl = `/yt-img/vi/${videoId}/maxresdefault.jpg`;
+    } else if (track.uri.includes('soundcloud.com')) {
+      // Plug in our dynamically fetched SC artwork here
+      artUrl = scArtUrl; 
+    }
   }
 
   return (
@@ -124,7 +165,6 @@ export default function App() {
         />
       )}
       
-      {/* Trigger miniplayer if the layout is ANYTHING other than 0 (Focused) */}
       <LeftPanel 
         status={status} 
         onAction={handleAction} 
@@ -132,7 +172,6 @@ export default function App() {
         isPip={layoutMode !== 0} 
       />
       
-      {/* Only mount the RightPanel and Modals if we are fully focused */}
       {layoutMode === 0 && (
         <>
           <RightPanel 

@@ -1,6 +1,47 @@
 import { useState, useEffect } from 'react';
 import Icons from './Icons';
 
+// --- UPDATED: Universal Metadata Sanitizer ---
+const sanitizeMetadata = (rawTitle, rawAuthor) => {
+  let author = rawAuthor || "Unknown";
+  let title = rawTitle || "Unknown";
+
+  // 1. Clean the Author name (Remove 'Official', 'VEVO', '- Topic')
+  author = author
+    .replace(/^Official\s+/i, '')
+    .replace(/VEVO$/i, '')
+    .replace(/\s*-\s*Topic$/i, '')
+    .trim();
+
+  // 2. Clean the Title (Remove bracketed fluff, and 'ft. ...')
+  title = title
+    .replace(/[\[\(]?(Official|Audio|Lyric|Music Video|Visualizer|HD|HQ).*?([\]\)]|$)/gi, '')
+    .replace(/\s+(ft\.|feat\.|featuring).*$/gi, '')
+    .trim();
+
+  // 3. The Re-uploader Fix: Handle "Artist - Title" format
+  if (title.includes(' - ')) {
+    const parts = title.split(' - ');
+    const leftSide = parts[0].trim();
+    const rightSide = parts.slice(1).join(' - ').trim();
+
+    // If the uploader's channel name matches the left side, they are the real artist.
+    if (leftSide.toLowerCase().includes(author.toLowerCase()) || author.toLowerCase().includes(leftSide.toLowerCase())) {
+      title = rightSide;
+    } 
+    // If they don't match, the uploader is likely a random channel, and the left side is the true artist.
+    else {
+      author = leftSide;
+      title = rightSide;
+    }
+  }
+
+  // 4. Final trim of leftover dashes or spaces
+  title = title.replace(/^[-~]\s*/, '').replace(/\s*[-~]$/, '').trim();
+
+  return { cleanTitle: title, cleanAuthor: author };
+};
+
 export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
   const [localPos, setLocalPos] = useState(0);
 
@@ -41,6 +82,9 @@ export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  // Apply our new sanitizer to the current track
+  const { cleanTitle, cleanAuthor } = sanitizeMetadata(track.title, track.author);
+
   return (
     <div className={`left-panel ${isPip ? 'pip' : ''}`}>
       <div className="album-art-container">
@@ -55,8 +99,9 @@ export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
       
       {!isPip && (
         <div className="track-info">
-          <h1 className="title">{track.title}</h1>
-          <h2 className="author">{track.author}</h2>
+          {/* Display the beautifully cleaned metadata */}
+          <h1 className="title">{cleanTitle}</h1>
+          <h2 className="author">{cleanAuthor}</h2>
         </div>
       )}
 

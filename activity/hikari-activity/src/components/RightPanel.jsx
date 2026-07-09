@@ -1,6 +1,47 @@
 import { useState, useEffect, useRef } from 'react';
 import Icons from './Icons';
 
+// --- UPDATED: Universal Metadata Sanitizer ---
+const sanitizeMetadata = (rawTitle, rawAuthor) => {
+  let author = rawAuthor || "Unknown";
+  let title = rawTitle || "Unknown";
+
+  // 1. Clean the Author name (Remove 'Official', 'VEVO', '- Topic')
+  author = author
+    .replace(/^Official\s+/i, '')
+    .replace(/VEVO$/i, '')
+    .replace(/\s*-\s*Topic$/i, '')
+    .trim();
+
+  // 2. Clean the Title (Remove bracketed fluff, and 'ft. ...')
+  title = title
+    .replace(/[\[\(]?(Official|Audio|Lyric|Music Video|Visualizer|HD|HQ).*?([\]\)]|$)/gi, '')
+    .replace(/\s+(ft\.|feat\.|featuring).*$/gi, '')
+    .trim();
+
+  // 3. The Re-uploader Fix: Handle "Artist - Title" format
+  if (title.includes(' - ')) {
+    const parts = title.split(' - ');
+    const leftSide = parts[0].trim();
+    const rightSide = parts.slice(1).join(' - ').trim();
+
+    // If the uploader's channel name matches the left side, they are the real artist.
+    if (leftSide.toLowerCase().includes(author.toLowerCase()) || author.toLowerCase().includes(leftSide.toLowerCase())) {
+      title = rightSide;
+    } 
+    // If they don't match, the uploader is likely a random channel, and the left side is the true artist.
+    else {
+      author = leftSide;
+      title = rightSide;
+    }
+  }
+
+  // 4. Final trim of leftover dashes or spaces
+  title = title.replace(/^[-~]\s*/, '').replace(/\s*[-~]$/, '').trim();
+
+  return { cleanTitle: title, cleanAuthor: author };
+};
+
 export default function RightPanel({ status, onAction, openModal, guildId }) {
   const [activeTab, setActiveTab] = useState('queue');
   
@@ -41,8 +82,9 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
       setLyricOffset(0);
       
       try {
-        const cleanTitle = track.title.replace(/(\(Official.*\)|\(Lyric.*\)|\(Music Video\)|ft\..*)/gi, '').trim();
-        const query = encodeURIComponent(`${cleanTitle} ${track.author}`);
+        // Use our new sanitizer so LRClib gets a crystal clear search query!
+        const { cleanTitle, cleanAuthor } = sanitizeMetadata(track.title, track.author);
+        const query = encodeURIComponent(`${cleanTitle} ${cleanAuthor}`);
         
         const res = await fetch(`/lrclib/api/search?q=${query}`);
         if (!res.ok) throw new Error("API Error");
@@ -77,14 +119,13 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
     fetchSyncedLyrics();
   }, [activeTab, track?.title]);
 
-  // 3. FIXED: Isolated Auto-scroll logic
+  // 3. Isolated Auto-scroll logic
   useEffect(() => {
     if (activeTab === 'lyrics' && scrollRef.current && isAutoScroll) {
       const activeElement = scrollRef.current.querySelector('.lyric-line.active');
       const container = scrollRef.current;
       
       if (activeElement && container) {
-        // Calculate exact center relative to the scroll container ONLY
         const targetScroll = activeElement.offsetTop - (container.offsetHeight / 2) + (activeElement.offsetHeight / 2);
         
         container.scrollTo({
@@ -95,12 +136,10 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
     }
   }, [localPos, activeTab, isAutoScroll, lyricOffset]);
 
-  // Disable auto-scroll if the user manually interacts with the lyric container
   const handleUserInteraction = () => {
     if (isAutoScroll) setIsAutoScroll(false);
   };
 
-  // Adjusted time includes the user's manual offset (in milliseconds)
   const adjustedPos = localPos + (lyricOffset * 1000);
 
   return (
@@ -132,21 +171,26 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
             {(status?.queue || []).length === 0 ? (
               <div className="empty-state">Queue is empty</div>
             ) : (
-              status.queue.map((track, i) => (
-                <div key={track.uid} className="queue-item">
-                  <span className="queue-index">{i + 1}</span>
-                  <div className="queue-meta">
-                    <span className="queue-title">{track.title}</span>
-                    <span className="queue-author">{track.author}</span>
+              status.queue.map((queueTrack, i) => {
+                // Sanitize every track in the queue!
+                const { cleanTitle, cleanAuthor } = sanitizeMetadata(queueTrack.title, queueTrack.author);
+                
+                return (
+                  <div key={queueTrack.uid} className="queue-item">
+                    <span className="queue-index">{i + 1}</span>
+                    <div className="queue-meta">
+                      <span className="queue-title">{cleanTitle}</span>
+                      <span className="queue-author">{cleanAuthor}</span>
+                    </div>
+                    <div className="queue-actions">
+                      <span className="queue-requester">{queueTrack.requester.split('#')[0]}</span>
+                      <button className="remove-btn" onClick={() => onAction('remove', { uid: queueTrack.uid })}>
+                        {Icons.Trash}
+                      </button>
+                    </div>
                   </div>
-                  <div className="queue-actions">
-                    <span className="queue-requester">{track.requester.split('#')[0]}</span>
-                    <button className="remove-btn" onClick={() => onAction('remove', { uid: track.uid })}>
-                      {Icons.Trash}
-                    </button>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
@@ -155,7 +199,6 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
           <div className="synced-lyrics-container">
             {lyricsStatus && <div className="empty-state">{lyricsStatus}</div>}
             
-            {/* Offset Controls */}
             {lyricsData.length > 0 && (
               <div className="lyrics-offset-controls">
                 <button onClick={() => setLyricOffset(prev => prev + 1)}>▲</button>
@@ -188,7 +231,6 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
         </button>
       )}
 
-      {/* Resume Sync Button */}
       {activeTab === 'lyrics' && !isAutoScroll && lyricsData.length > 0 && (
         <button 
           className="resume-sync-btn" 

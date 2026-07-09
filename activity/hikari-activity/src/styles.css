@@ -198,11 +198,12 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
    MOBILE RESPONSIVENESS
    ========================================= */
 @media (max-width: 768px) {
-  /* Stack the panels vertically and allow scrolling */
+  /* Stack the panels vertically and turn on Scroll Snapping */
   .app-container {
     flex-direction: column;
     overflow-y: auto;
     overflow-x: hidden;
+    scroll-snap-type: y mandatory; /* Smoothly snap to the pages */
   }
 
   /* Make the background stretch the full scrolled height */
@@ -211,27 +212,31 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
     position: fixed; /* Keep the blur stationary while scrolling */
   }
 
-  /* LEFT PANEL: Take up the full first screen */
+  /* LEFT PANEL: Lock to exactly 1 screen height */
   .left-panel {
     flex: none;
     width: 100%;
-    min-height: 100vh; 
+    height: 100dvh; /* Changed from min-height to exact height */
     border-right: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     padding: 2rem 1rem;
+    scroll-snap-align: start; /* Force the scrollbar to snap here */
   }
 
   .album-art-container {
     max-width: 300px; /* slightly smaller on phones */
   }
 
-  /* RIGHT PANEL: Sits right below the player */
+  /* RIGHT PANEL: Lock to exactly 1 screen height */
   .right-panel {
     flex: none;
     width: 100%;
-    min-height: 100vh; 
+    height: 100dvh; /* Changed from min-height to exact height */
+    scroll-snap-align: start; /* Force the scrollbar to snap here */
   }
 
+  /* Because the right-panel is locked to the screen size, 
+     tab-content naturally becomes a constrained internal viewport! */
   .tab-content {
     padding: 1rem;
   }

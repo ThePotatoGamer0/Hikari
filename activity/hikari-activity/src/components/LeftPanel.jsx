@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import Icons from './Icons';
 
-export default function LeftPanel({ status, onAction }) {
+export default function LeftPanel({ status, onAction, artUrl }) {
   const [localPos, setLocalPos] = useState(0);
 
   const track = status?.current_track;
@@ -26,12 +26,6 @@ export default function LeftPanel({ status, onAction }) {
         <p>Add a song to get started.</p>
       </div>
     );
-  }
-
-  let artUrl = null;
-  if (track.uri.includes('youtube.com') || track.uri.includes('youtu.be')) {
-    const videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
-    artUrl = `/yt-img/vi/${videoId}/maxresdefault.jpg`;
   }
 
   const progressPct = track.length > 0 ? (localPos / track.length) * 100 : 0;

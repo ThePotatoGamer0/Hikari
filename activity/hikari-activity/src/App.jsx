@@ -67,9 +67,25 @@ export default function App() {
     return <div className="loading">Connecting to Voice Channel...</div>;
   }
 
+  // Determine the album art URL globally so the background can use it
+  const track = status?.current_track;
+  let artUrl = null;
+  if (track && (track.uri.includes('youtube.com') || track.uri.includes('youtu.be'))) {
+    const videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
+    artUrl = `/yt-img/vi/${videoId}/maxresdefault.jpg`;
+  }
+
   return (
     <div className="app-container">
-      <LeftPanel status={status} onAction={handleAction} />
+      {/* Dynamic Blurred Background Layer */}
+      {artUrl && (
+        <div 
+          className="blurred-background" 
+          style={{ backgroundImage: `url(${artUrl})` }}
+        />
+      )}
+      
+      <LeftPanel status={status} onAction={handleAction} artUrl={artUrl} />
       <RightPanel 
         status={status} 
         onAction={handleAction} 

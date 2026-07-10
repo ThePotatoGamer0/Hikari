@@ -6,7 +6,7 @@ import SearchModal from './components/SearchModal';
 
 const discordSdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
 
-// --- NEW: Component to handle YouTube Thumbnail Fallbacks automatically ---
+// --- UPDATED: Component to handle sneaky YouTube Thumbnail Fallbacks ---
 const ThumbnailImage = ({ url, videoId }) => {
   const [src, setSrc] = useState(url);
 
@@ -15,14 +15,30 @@ const ThumbnailImage = ({ url, videoId }) => {
     setSrc(url);
   }, [url]);
 
-  const handleError = () => {
-    // If the maxres image 404s, fall back to the guaranteed hqdefault
+  const triggerFallback = () => {
+    // If we are currently trying to load maxres, fall back to the guaranteed hqdefault
     if (src && src.includes('maxresdefault.jpg') && videoId) {
       setSrc(`/yt-img/vi/${videoId}/hqdefault.jpg`);
     }
   };
 
-  return <img src={src} alt="Album Art" className="album-art" onError={handleError} />;
+  const handleLoad = (e) => {
+    // YouTube returns a 120x90 gray image instead of a 404 when maxres is missing.
+    // If the loaded image is 120px wide or smaller, it's the fake image.
+    if (e.target.naturalWidth <= 120 && src.includes('maxresdefault.jpg')) {
+      triggerFallback();
+    }
+  };
+
+  return (
+    <img 
+      src={src} 
+      alt="Album Art" 
+      className="album-art" 
+      onLoad={handleLoad} 
+      onError={triggerFallback} // Keep onError just in case a true 404 slips through
+    />
+  );
 };
 
 export default function App() {
@@ -65,7 +81,7 @@ export default function App() {
     setupDiscord();
   }, []);
 
-  // --- NEW: Deferred On-Demand Auth Logic ---
+  // 2. Deferred On-Demand Auth Logic
   const ensureAuthenticated = useCallback(async () => {
     if (currentUser) return currentUser; // Already authed
 
@@ -117,7 +133,7 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // 2. Poll for Music Queue Status
+  // 3. Poll for Music Queue Status
   useEffect(() => {
     if (!guildId) return;
 
@@ -139,7 +155,7 @@ export default function App() {
     return () => clearInterval(pollInterval.current);
   }, [guildId]);
 
-  // 3. Handle asynchronous SoundCloud oEmbed artwork resolving
+  // 4. Handle asynchronous SoundCloud oEmbed artwork resolving
   useEffect(() => {
     const track = status?.current_track;
     if (!track || !track.uri.includes('soundcloud.com')) {
@@ -167,7 +183,7 @@ export default function App() {
     fetchSoundcloudArt();
   }, [status?.current_track?.uri]);
 
-  // 4. Global Action Handler
+  // 5. Global Action Handler
   const handleAction = async (endpoint, payload = {}) => {
     if (!guildId) return;
 

@@ -28,4 +28,4 @@ jobs:
           context: .
           push: true
           # This creates a unique tag based on your GitHub username and repo name
-          tags: ghcr.io/${{ github.repository }}:latest
+          tags: ghcr.io/thepotatogamer0/hikari:latest

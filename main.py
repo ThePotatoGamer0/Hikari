@@ -608,7 +608,6 @@ class EmbedManager:
                 bar = EmbedManager.create_progress_bar(player.position, track.length)
                 progress_str = f"{bar} {EmbedManager.format_time(player.position)} / {EmbedManager.format_time(track.length)}"
 
-            # Changed dynamically to show Paused status if playback is toggled off
             title = f"{Icons.MUSIC} Paused" if player.paused else f"{Icons.MUSIC} Now Playing"
             embed = discord.Embed(title=title, description=f"**{track.title}**\nby {track.author}\n\n{Icons.CD} {progress_str}", color=discord.Color.green())
             
@@ -1168,6 +1167,8 @@ class MusicBot(commands.Bot):
                 "title": req.track.title,
                 "author": req.track.author,
                 "uri": req.track.uri,
+                # NEW: Passing length directly to the frontend for the info modal
+                "length": req.track.length,
                 "requester": str(req.requester),
                 "uid": req.uid
             })
@@ -1600,7 +1601,6 @@ class MusicBot(commands.Bot):
         
         return web.json_response({"success": True, "moved_to": channel.name}, headers=headers)
 
-    # --- NEW: Seek Endpoint ---
     async def api_seek(self, request: web.Request):
         headers = {"Access-Control-Allow-Origin": "*"}
         data = await self.get_api_data(request)
@@ -1633,7 +1633,6 @@ class MusicBot(commands.Bot):
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500, headers=headers)
 
-    # --- NEW: Toggle Playback Endpoint ---
     async def api_toggleplayback(self, request: web.Request):
         headers = {"Access-Control-Allow-Origin": "*"}
         data = await self.get_api_data(request)
@@ -2029,7 +2028,6 @@ async def skip(ctx: commands.Context):
         else:
             await ctx.send(f"Voted to skip! ({len(state.skip_votes)}/{required} votes needed).", ephemeral=True)
 
-# --- NEW: Toggle Playback Command ---
 @bot.hybrid_command(name="toggleplayback", description="Pause or resume the current playing track.")
 @is_authorized(level=2)
 async def toggleplayback(ctx: commands.Context):

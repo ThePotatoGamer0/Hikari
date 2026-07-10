@@ -548,12 +548,21 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   align-items: center;
 }
 
-.info-modal-art {
+/* NEW: STRICT 1:1 CROP FOR THE ALBUM ART */
+.info-modal-art-wrapper {
   width: 90px;
   height: 90px;
+  flex-shrink: 0;
   border-radius: 8px;
-  object-fit: cover;
+  overflow: hidden;
   box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+
+.info-modal-art {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
 }
 
 .info-modal-meta {

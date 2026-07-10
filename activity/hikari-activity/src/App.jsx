@@ -1,10 +1,29 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { DiscordSDK } from '@discord/embedded-app-sdk';
 import LeftPanel from './components/LeftPanel';
 import RightPanel from './components/RightPanel';
 import SearchModal from './components/SearchModal';
 
 const discordSdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
+
+// --- NEW: Component to handle YouTube Thumbnail Fallbacks automatically ---
+const ThumbnailImage = ({ url, videoId }) => {
+  const [src, setSrc] = useState(url);
+
+  // Keep the source synced if the song changes
+  useEffect(() => {
+    setSrc(url);
+  }, [url]);
+
+  const handleError = () => {
+    // If the maxres image 404s, fall back to the guaranteed hqdefault
+    if (src && src.includes('maxresdefault.jpg') && videoId) {
+      setSrc(`/yt-img/vi/${videoId}/hqdefault.jpg`);
+    }
+  };
+
+  return <img src={src} alt="Album Art" className="album-art" onError={handleError} />;
+};
 
 export default function App() {
   const [guildId, setGuildId] = useState(null);
@@ -22,6 +41,7 @@ export default function App() {
 
   const pollInterval = useRef(null);
 
+  // 1. App Launch: Initialize SDK quickly without asking for permission
   useEffect(() => {
     async function setupDiscord() {
       try {
@@ -38,30 +58,6 @@ export default function App() {
           setLayoutMode(layout_mode);
         });
 
-        // --- DISCORD OAUTH2 HANDSHAKE FLOW ---
-        // 1. Request a temporary authorization code from the Discord client
-        const { code } = await discordSdk.commands.authorize({
-          client_id: import.meta.env.VITE_DISCORD_CLIENT_ID,
-          response_type: 'code',
-          state: '',
-          prompt: 'none',
-          scope: ['identify']
-        });
-
-        // 2. POST the code to your Python backend token exchange endpoint
-        const tokenRes = await fetch('/api/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code })
-        });
-        const { access_token } = await tokenRes.json();
-
-        // 3. Finalize SDK client authentication using the returned access token
-        const auth = await discordSdk.commands.authenticate({ access_token });
-        
-        // 4. Cache the verified user object in application state
-        setCurrentUser(auth.user);
-
       } catch (err) {
         console.error("Failed to initialize Discord SDK Flow:", err);
       }
@@ -69,6 +65,59 @@ export default function App() {
     setupDiscord();
   }, []);
 
+  // --- NEW: Deferred On-Demand Auth Logic ---
+  const ensureAuthenticated = useCallback(async () => {
+    if (currentUser) return currentUser; // Already authed
+
+    try {
+      let code;
+      try {
+        // Try background silent auth first
+        const authRes = await discordSdk.commands.authorize({
+          client_id: import.meta.env.VITE_DISCORD_CLIENT_ID,
+          response_type: 'code',
+          state: '',
+          prompt: 'none',
+          scope: ['identify']
+        });
+        code = authRes.code;
+      } catch (silentError) {
+        console.log("Silent auth rejected, requesting explicit consent...");
+        // If they haven't approved the app yet, show the Discord popup
+        const authRes = await discordSdk.commands.authorize({
+          client_id: import.meta.env.VITE_DISCORD_CLIENT_ID,
+          response_type: 'code',
+          state: '',
+          prompt: 'consent',
+          scope: ['identify']
+        });
+        code = authRes.code;
+      }
+
+      // POST the code to your Python backend token exchange endpoint
+      const tokenRes = await fetch('/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code })
+      });
+      
+      const tokenData = await tokenRes.json();
+      if (tokenData.error || !tokenData.access_token) {
+        throw new Error(`Backend Token Exchange failed: ${JSON.stringify(tokenData)}`);
+      }
+
+      // Authenticate the SDK securely
+      const auth = await discordSdk.commands.authenticate({ access_token: tokenData.access_token });
+      setCurrentUser(auth.user);
+      return auth.user;
+
+    } catch (err) {
+      console.error("Auth failed or user cancelled:", err);
+      return null;
+    }
+  }, [currentUser]);
+
+  // 2. Poll for Music Queue Status
   useEffect(() => {
     if (!guildId) return;
 
@@ -90,7 +139,7 @@ export default function App() {
     return () => clearInterval(pollInterval.current);
   }, [guildId]);
 
-  // Handle asynchronous SoundCloud oEmbed artwork resolving
+  // 3. Handle asynchronous SoundCloud oEmbed artwork resolving
   useEffect(() => {
     const track = status?.current_track;
     if (!track || !track.uri.includes('soundcloud.com')) {
@@ -118,14 +167,19 @@ export default function App() {
     fetchSoundcloudArt();
   }, [status?.current_track?.uri]);
 
+  // 4. Global Action Handler
   const handleAction = async (endpoint, payload = {}) => {
     if (!guildId) return;
 
-    // Build the payload by securely adding the active user's Snowflake ID 
+    // Trigger auth ONLY when a user clicks a button to control music
+    const user = await ensureAuthenticated();
+    if (!user) return; // Halt if auth failed or was cancelled by user
+
+    // Securely build payload with true User ID
     const enhancedPayload = {
       ...payload,
-      requester_id: currentUser?.id,
-      requester_name: currentUser?.username || 'Unknown User'
+      requester_id: user.id,
+      requester_name: user.username || 'Unknown User'
     };
 
     try {
@@ -145,11 +199,12 @@ export default function App() {
 
   const track = status?.current_track;
   let artUrl = null;
+  let ytVideoId = null;
   
   if (track) {
     if (track.uri.includes('youtube.com') || track.uri.includes('youtu.be')) {
-      const videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
-      artUrl = `/yt-img/vi/${videoId}/maxresdefault.jpg`;
+      ytVideoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
+      artUrl = `/yt-img/vi/${ytVideoId}/maxresdefault.jpg`;
     } else if (track.uri.includes('soundcloud.com')) {
       artUrl = scArtUrl; 
     }
@@ -168,6 +223,8 @@ export default function App() {
         status={status} 
         onAction={handleAction} 
         artUrl={artUrl} 
+        // Pass the dynamically managed component down to handle the fallback
+        artComponent={artUrl && ytVideoId ? <ThumbnailImage url={artUrl} videoId={ytVideoId} /> : null}
         isPip={layoutMode !== 0} 
       />
       

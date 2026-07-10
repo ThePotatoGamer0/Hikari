@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Icons from './Icons';
+import ContextMenu from './ContextMenu';
 
 // Universal Metadata Sanitizer
 const sanitizeMetadata = (rawTitle, rawAuthor) => {
@@ -27,9 +28,51 @@ const sanitizeMetadata = (rawTitle, rawAuthor) => {
   return { cleanTitle: title, cleanAuthor: author };
 };
 
-export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
+// Inline SVGs for the Context Menu
+const ContextIcons = {
+  Copy: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>,
+  Image: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+};
+
+// Translates internal proxy URLs back to their true public source
+const getTrueUrl = (url) => {
+  if (!url) return '';
+  if (url.startsWith('/yt-img/')) return url.replace('/yt-img/', 'https://img.youtube.com/');
+  if (url.startsWith('/sc-img/')) return url.replace('/sc-img/', 'https://i1.sndcdn.com/');
+  return url;
+};
+
+// Bypasses CORS by rendering the proxied image to a canvas, then copying as a raw PNG
+const copyImageToClipboard = async (url) => {
+  try {
+    const img = new Image();
+    img.crossOrigin = "anonymous"; 
+    img.src = url;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      canvas.toBlob(async (blob) => {
+        try {
+          await navigator.clipboard.write([
+            new window.ClipboardItem({ 'image/png': blob })
+          ]);
+        } catch (err) {
+          console.error("Clipboard write failed", err);
+        }
+      }, 'image/png');
+    };
+  } catch (err) {
+    console.error("Image fetch failed", err);
+  }
+};
+
+export default function LeftPanel({ status, onAction, artUrl, artComponent, isPip = false }) {
   const [localPos, setLocalPos] = useState(0);
   const [currentFilter, setCurrentFilter] = useState('clear');
+  const [contextMenu, setContextMenu] = useState(null);
 
   const track = status?.current_track;
 
@@ -45,21 +88,28 @@ export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
     return () => clearInterval(ticker);
   }, [track]);
 
-  // --- NEW: Interactive Seekbar Handler ---
+  // Interactive Seekbar Handler
   const handleSeek = (e) => {
-    if (!track || track.length === 0) return; // Prevent seeking streams or empty tracks
+    if (!track || track.length === 0) return; 
     
-    // Calculate the percentage clicked relative to the width of the seekbar
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const pct = Math.max(0, Math.min(1, clickX / rect.width));
     
-    // Calculate exact millisecond target and optimistically update UI
     const targetPos = Math.floor(pct * track.length);
     setLocalPos(targetPos);
     
-    // Send standard action out
     onAction('seek', { position: targetPos });
+  };
+
+  // Right-Click Handler for Album Art
+  const handleContextMenu = (e) => {
+    if (!artUrl) return; // Prevent menu if there's no artwork loaded
+    e.preventDefault();
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY
+    });
   };
 
   if (!track) {
@@ -89,8 +139,14 @@ export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
 
   return (
     <div className={`left-panel ${isPip ? 'pip' : ''}`}>
-      <div className="album-art-container">
-        {artUrl ? (
+      <div 
+        className="album-art-container"
+        onContextMenu={handleContextMenu}
+        style={{ cursor: artUrl ? 'context-menu' : 'default' }}
+      >
+        {artComponent ? (
+          artComponent
+        ) : artUrl ? (
           <img src={artUrl} alt="Album Art" className="album-art" />
         ) : (
           <div className="album-art fallback">
@@ -107,7 +163,6 @@ export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
       )}
 
       <div className="seekbar-container">
-        {/* Pass the click handler directly to the container to track touches/clicks */}
         <div className="seekbar-bg" onClick={handleSeek}>
           <div className="seekbar-fill" style={{ width: `${progressPct}%` }}></div>
         </div>
@@ -153,7 +208,6 @@ export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
             </button>
           </div>
 
-          {/* NEW: Audio Filter Dropdown */}
           <div className="filter-container">
             <select 
               className="filter-select"
@@ -172,6 +226,29 @@ export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
             </select>
           </div>
         </>
+      )}
+
+      {/* --- Context Menu Render --- */}
+      {contextMenu && (
+        <ContextMenu 
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          options={[
+            {
+              label: "Copy Image",
+              icon: ContextIcons.Image,
+              // We pass the internal proxied URL here so the canvas can bypass CORS
+              onClick: () => copyImageToClipboard(artUrl) 
+            },
+            {
+              label: "Copy Image URL",
+              icon: ContextIcons.Copy,
+              // We pass the true public URL to the user's clipboard
+              onClick: () => navigator.clipboard.writeText(getTrueUrl(artUrl)) 
+            }
+          ]}
+        />
       )}
     </div>
   );

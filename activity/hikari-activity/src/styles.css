@@ -72,7 +72,19 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   background: rgba(0, 0, 0, 0.2); 
 }
 .left-panel.empty { color: var(--text-muted); }
-.album-art-container { width: 100%; max-width: 400px; aspect-ratio: 1/1; margin-bottom: 2rem; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+
+/* UPDATED: Album Art Container dynamic height fix */
+.album-art-container { 
+  width: 100%; 
+  max-width: min(400px, 45vh); 
+  aspect-ratio: 1/1; 
+  margin-bottom: 2rem; 
+  border-radius: 12px; 
+  overflow: hidden; 
+  box-shadow: 0 20px 50px rgba(0,0,0,0.6); 
+  flex-shrink: 0; 
+}
+
 .album-art { width: 100%; height: 100%; object-fit: cover; }
 .album-art.fallback { display: flex; justify-content: center; align-items: center; background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
 .album-art.fallback svg { width: 100px; height: 100px; }
@@ -309,8 +321,9 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
     scroll-snap-align: start; 
   }
 
+  /* UPDATED: Mobile Album Art Container dynamic height fix */
   .album-art-container {
-    max-width: 300px; 
+    max-width: min(300px, 45vh); 
   }
 
   .right-panel {
@@ -369,6 +382,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   justify-content: flex-end; 
 }
 
+/* UPDATED: PIP mode reset to allow stretching */
 .left-panel.pip .album-art-container {
   position: absolute;
   top: 0;
@@ -381,6 +395,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   margin: 0;
   z-index: -1;
   box-shadow: none;
+  flex-shrink: 1;
 }
 
 .left-panel.pip .seekbar-container {
@@ -390,4 +405,86 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   max-width: none;
   background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
   z-index: 10;
+}
+
+/* =========================================
+   CONTEXT MENU (RIGHT CLICK)
+   ========================================= */
+.context-menu-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1000;
+  /* Invisible but catches clicks */
+  background: transparent; 
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 1001;
+  background: rgba(20, 20, 20, 0.85);
+  backdrop-filter: blur(25px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 0.5rem;
+  min-width: 200px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: popIn 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes popIn {
+  0% { opacity: 0; transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.context-menu-item {
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  padding: 0.6rem 1rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  text-align: left;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.context-menu-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.context-menu-item:hover {
+  background: rgba(88, 101, 242, 0.9); /* Discord Blurple */
+  color: white;
+}
+
+.context-menu-item:hover .context-menu-icon {
+  color: white;
+}
+
+/* Danger items (like Delete/Remove) get a red hover instead of blurple */
+.context-menu-item.danger {
+  color: #ff4a4a;
+}
+.context-menu-item.danger .context-menu-icon {
+  color: #ff4a4a;
+}
+.context-menu-item.danger:hover {
+  background: #ff4a4a;
+  color: white;
+}
+.context-menu-item.danger:hover .context-menu-icon {
+  color: white;
 }

@@ -11,14 +11,14 @@ import {
   X,
   Play,
   Pause,
-  MoreHorizontal
+  MoreHorizontal,
+  Info
 } from 'lucide-react';
 
 export default {
   MusicNote: <Music size={24} />,
   Shuffle: <Shuffle size={24} />,
   
-  // Adding fill="currentColor" to playback controls for a solid look
   Stop: <Square size={24} fill="currentColor" />,
   Skip: <SkipForward size={24} fill="currentColor" />,
   Play: <Play size={24} fill="currentColor" />,
@@ -26,14 +26,11 @@ export default {
   
   Repeat: <Repeat size={24} />,
   RepeatOne: <Repeat1 size={24} />,
-  
-  // Infinity is aliased in the import to avoid conflicting with JavaScript's global Infinity object
   Infinity: <InfinityIcon size={24} />,
   
   Plus: <Plus size={24} />,
   Trash: <Trash2 size={20} />,
   Close: <X size={24} />,
-  
-  // New Three Dots icon
-  More: <MoreHorizontal size={24} />
+  More: <MoreHorizontal size={24} />,
+  Info: <Info size={24} />
 };

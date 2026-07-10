@@ -1,20 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import Icons from './Icons';
+import ContextMenu from './ContextMenu';
 
 const sanitizeMetadata = (rawTitle, rawAuthor) => {
   let author = rawAuthor || "Unknown";
   let title = rawTitle || "Unknown";
 
-  author = author
-    .replace(/^Official\s+/i, '')
-    .replace(/VEVO$/i, '')
-    .replace(/\s*-\s*Topic$/i, '')
-    .trim();
-
-  title = title
-    .replace(/[\[\(]?(Official|Audio|Lyric|Music Video|Visualizer|HD|HQ).*?([\]\)]|$)/gi, '')
-    .replace(/\s+(ft\.|feat\.|featuring).*$/gi, '')
-    .trim();
+  author = author.replace(/^Official\s+/i, '').replace(/VEVO$/i, '').replace(/\s*-\s*Topic$/i, '').trim();
+  title = title.replace(/[\[\(]?(Official|Audio|Lyric|Music Video|Visualizer|HD|HQ).*?([\]\)]|$)/gi, '')
+               .replace(/\s+(ft\.|feat\.|featuring).*$/gi, '').trim();
 
   if (title.includes(' - ')) {
     const parts = title.split(' - ');
@@ -30,15 +24,19 @@ const sanitizeMetadata = (rawTitle, rawAuthor) => {
   }
 
   title = title.replace(/^[-~]\s*/, '').replace(/\s*[-~]$/, '').trim();
-
   return { cleanTitle: title, cleanAuthor: author };
 };
 
-export default function RightPanel({ status, onAction, openModal, guildId }) {
+const ContextIcons = {
+  Copy: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>,
+  External: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+};
+
+export default function RightPanel({ status, onAction, openModal, openInfoModal, guildId }) {
   const [activeTab, setActiveTab] = useState('queue');
-  
-  // NEW: Search state for the queue filter
   const [queueSearch, setQueueSearch] = useState('');
+  
+  const [contextMenu, setContextMenu] = useState(null);
   
   const [lyricsData, setLyricsData] = useState([]);
   const [lyricsStatus, setLyricsStatus] = useState("Loading...");
@@ -120,12 +118,18 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
     if (isAutoScroll) setIsAutoScroll(false);
   };
 
+  const handleContextMenu = (e, trackData) => {
+    e.preventDefault();
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      track: trackData
+    });
+  };
+
   const adjustedPos = localPos + (lyricOffset * 1000);
 
-  // --- NEW: Queue Filtering Logic ---
   const rawQueue = status?.queue || [];
-  
-  // Attach the original index so filtering doesn't mess up the track numbers
   const queueWithIndexes = rawQueue.map((t, index) => ({ ...t, originalIndex: index + 1 }));
   
   const filteredQueue = queueWithIndexes.filter(queueTrack => {
@@ -162,7 +166,6 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
         {activeTab === 'queue' && (
           <div className="queue-tab-wrapper">
             
-            {/* The new inline search bar (only shows if there are songs in the queue) */}
             {rawQueue.length > 0 && (
               <div className="queue-search-wrapper">
                 <input 
@@ -185,7 +188,14 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
                   const { cleanTitle, cleanAuthor } = sanitizeMetadata(queueTrack.title, queueTrack.author);
                   
                   return (
-                    <div key={queueTrack.uid} className="queue-item">
+                    <div 
+                      key={queueTrack.uid} 
+                      className="queue-item"
+                      onContextMenu={(e) => handleContextMenu(e, queueTrack)}
+                      // NEW: Open the info modal with THIS specific track
+                      onClick={() => openInfoModal(queueTrack)}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <span className="queue-index">{queueTrack.originalIndex}</span>
                       <div className="queue-meta">
                         <span className="queue-title">{cleanTitle}</span>
@@ -193,7 +203,11 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
                       </div>
                       <div className="queue-actions">
                         <span className="queue-requester">{queueTrack.requester.split('#')[0]}</span>
-                        <button className="remove-btn" onClick={() => onAction('remove', { uid: queueTrack.uid })}>
+                        {/* NEW: stopPropagation prevents the info modal from firing when deleting a song */}
+                        <button className="remove-btn" onClick={(e) => {
+                          e.stopPropagation(); 
+                          onAction('remove', { uid: queueTrack.uid });
+                        }}>
                           {Icons.Trash}
                         </button>
                       </div>
@@ -248,6 +262,32 @@ export default function RightPanel({ status, onAction, openModal, guildId }) {
         >
           Resume Sync
         </button>
+      )}
+
+      {contextMenu && (
+        <ContextMenu 
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          options={[
+            {
+              label: "Copy Link",
+              icon: ContextIcons.Copy,
+              onClick: () => navigator.clipboard.writeText(contextMenu.track.uri)
+            },
+            {
+              label: "Open in Browser",
+              icon: ContextIcons.External,
+              onClick: () => window.open(contextMenu.track.uri, '_blank')
+            },
+            {
+              label: "Remove Track",
+              icon: Icons.Trash,
+              danger: true,
+              onClick: () => onAction('remove', { uid: contextMenu.track.uid })
+            }
+          ]}
+        />
       )}
     </div>
   );

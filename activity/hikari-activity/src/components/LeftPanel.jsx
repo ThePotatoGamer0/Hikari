@@ -30,6 +30,9 @@ const sanitizeMetadata = (rawTitle, rawAuthor) => {
 export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
   const [localPos, setLocalPos] = useState(0);
   const [currentFilter, setCurrentFilter] = useState('clear');
+  
+  // NEW: State for the Three Dots menu
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   const track = status?.current_track;
 
@@ -45,20 +48,17 @@ export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
     return () => clearInterval(ticker);
   }, [track]);
 
-  // --- NEW: Interactive Seekbar Handler ---
+  // Interactive Seekbar Handler
   const handleSeek = (e) => {
     if (!track || track.length === 0) return; // Prevent seeking streams or empty tracks
     
-    // Calculate the percentage clicked relative to the width of the seekbar
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const pct = Math.max(0, Math.min(1, clickX / rect.width));
     
-    // Calculate exact millisecond target and optimistically update UI
     const targetPos = Math.floor(pct * track.length);
     setLocalPos(targetPos);
     
-    // Send standard action out
     onAction('seek', { position: targetPos });
   };
 
@@ -107,7 +107,6 @@ export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
       )}
 
       <div className="seekbar-container">
-        {/* Pass the click handler directly to the container to track touches/clicks */}
         <div className="seekbar-bg" onClick={handleSeek}>
           <div className="seekbar-fill" style={{ width: `${progressPct}%` }}></div>
         </div>
@@ -118,60 +117,119 @@ export default function LeftPanel({ status, onAction, artUrl, isPip = false }) {
       </div>
 
       {!isPip && (
-        <>
-          <div className="controls-row">
+        <div className="controls-row">
+          
+          {/* 1. SHUFFLE */}
+          <button 
+            className={`control-btn ${status?.shuffle ? 'active' : ''}`} 
+            onClick={() => onAction('shuffle')}
+          >
+            {Icons.Shuffle}
+          </button>
+
+          {/* 2. STOP */}
+          <button className="control-btn" onClick={() => onAction('stop')}>
+            {Icons.Stop}
+          </button>
+
+          {/* 3. PLAY/PAUSE (MAIN BUTTON) */}
+          <button className="control-btn main-play" onClick={() => onAction('toggleplayback')}>
+            {track.is_paused ? Icons.Play : Icons.Pause}
+          </button>
+
+          {/* 4. SKIP */}
+          <button className="control-btn" onClick={() => onAction('skip')}>
+            {Icons.Skip}
+          </button>
+
+          {/* 5. THREE DOTS MENU */}
+          <div style={{ position: 'relative' }}>
             <button 
-              className={`control-btn ${status?.shuffle ? 'active' : ''}`} 
-              onClick={() => onAction('shuffle')}
+              className={`control-btn ${showMoreMenu ? 'active' : ''}`} 
+              onClick={() => setShowMoreMenu(!showMoreMenu)}
             >
-              {Icons.Shuffle}
+              {Icons.More}
             </button>
 
-            <button className="control-btn" onClick={() => onAction('stop')}>
-              {Icons.Stop}
-            </button>
+            {/* Submenu Dropdown */}
+            {showMoreMenu && (
+              <>
+                {/* Invisible overlay to close menu when clicking outside */}
+                <div 
+                  style={{ position: 'fixed', inset: 0, zIndex: 40 }} 
+                  onClick={() => setShowMoreMenu(false)} 
+                />
+                
+                {/* The Floating Menu */}
+                <div style={{
+                  position: 'absolute', 
+                  bottom: 'calc(100% + 1rem)', 
+                  right: '0',
+                  background: 'rgba(20, 20, 20, 0.95)', 
+                  backdropFilter: 'blur(25px)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)', 
+                  borderRadius: '12px',
+                  padding: '1.2rem', 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  gap: '1rem',
+                  minWidth: '240px', 
+                  zIndex: 50, 
+                  boxShadow: '0 10px 40px rgba(0,0,0,0.5)'
+                }}>
+                  
+                  <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Playback Options
+                  </div>
 
-            <button className="control-btn main-play" onClick={() => onAction('skip')}>
-              {Icons.Skip}
-            </button>
+                  {/* Autoplay Toggle */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.95rem' }}>Autoplay</span>
+                    <button className={`control-btn ${status?.autoplay ? 'active' : ''}`} onClick={() => onAction('autoplay')}>
+                      {Icons.Infinity}
+                    </button>
+                  </div>
 
-            <button 
-              className={`control-btn ${status?.loop_mode !== 'off' ? 'active' : ''}`} 
-              onClick={() => {
-                const nextMode = status?.loop_mode === 'off' ? 'playlist' : status?.loop_mode === 'playlist' ? 'song' : 'off';
-                onAction('loop', { mode: nextMode });
-              }}
-            >
-              {status?.loop_mode === 'song' ? Icons.RepeatOne : Icons.Repeat}
-            </button>
+                  {/* Loop Toggle */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.95rem' }}>Loop</span>
+                    <button className={`control-btn ${status?.loop_mode !== 'off' ? 'active' : ''}`} onClick={() => {
+                      const nextMode = status?.loop_mode === 'off' ? 'playlist' : status?.loop_mode === 'playlist' ? 'song' : 'off';
+                      onAction('loop', { mode: nextMode });
+                    }}>
+                      {status?.loop_mode === 'song' ? Icons.RepeatOne : Icons.Repeat}
+                    </button>
+                  </div>
 
-            <button 
-              className={`control-btn ${status?.autoplay ? 'active' : ''}`} 
-              onClick={() => onAction('autoplay')}
-            >
-              {Icons.Infinity}
-            </button>
+                  <hr style={{ border: 'none', borderTop: '1px solid rgba(255,255,255,0.1)', margin: '0.2rem 0' }} />
+
+                  {/* Audio Filters */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <span style={{ fontSize: '0.95rem' }}>Audio Filter</span>
+                    <select 
+                      className="filter-select"
+                      value={currentFilter}
+                      onChange={(e) => {
+                        const newFilter = e.target.value;
+                        setCurrentFilter(newFilter);
+                        onAction('filter', { preset: newFilter });
+                      }}
+                      style={{ width: '100%', textAlign: 'left' }}
+                    >
+                      <option value="clear">Normal (Clear)</option>
+                      <option value="bassboost">Bass Boost</option>
+                      <option value="nightcore">Nightcore</option>
+                      <option value="8d">8D Audio</option>
+                      <option value="vaporwave">Vaporwave</option>
+                    </select>
+                  </div>
+
+                </div>
+              </>
+            )}
           </div>
 
-          {/* NEW: Audio Filter Dropdown */}
-          <div className="filter-container">
-            <select 
-              className="filter-select"
-              value={currentFilter}
-              onChange={(e) => {
-                const newFilter = e.target.value;
-                setCurrentFilter(newFilter);
-                onAction('filter', { preset: newFilter });
-              }}
-            >
-              <option value="clear">Audio: Normal</option>
-              <option value="bassboost">Audio: Bass Boost</option>
-              <option value="nightcore">Audio: Nightcore</option>
-              <option value="8d">Audio: 8D Audio</option>
-              <option value="vaporwave">Audio: Vaporwave</option>
-            </select>
-          </div>
-        </>
+        </div>
       )}
     </div>
   );

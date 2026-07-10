@@ -608,7 +608,10 @@ class EmbedManager:
                 bar = EmbedManager.create_progress_bar(player.position, track.length)
                 progress_str = f"{bar} {EmbedManager.format_time(player.position)} / {EmbedManager.format_time(track.length)}"
 
-            embed = discord.Embed(title=f"{Icons.MUSIC} Now Playing", description=f"**{track.title}**\nby {track.author}\n\n{Icons.CD} {progress_str}", color=discord.Color.green())
+            # Changed dynamically to show Paused status if playback is toggled off
+            title = f"{Icons.MUSIC} Paused" if player.paused else f"{Icons.MUSIC} Now Playing"
+            embed = discord.Embed(title=title, description=f"**{track.title}**\nby {track.author}\n\n{Icons.CD} {progress_str}", color=discord.Color.green())
+            
             artwork = track.artwork or (f"https://img.youtube.com/vi/{track.identifier}/maxresdefault.jpg" if track.source == 'youtube' else None)
             if artwork: embed.set_thumbnail(url=artwork)
             return embed
@@ -1074,7 +1077,7 @@ class MusicBot(commands.Bot):
         app.router.add_route('*', '/api/token', self.api_token)
         
         # Control Endpoints (Mapped explicitly to bot commands)
-        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc', 'seek']:
+        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc', 'seek', 'toggleplayback']:
             app.router.add_route('*', f'/api/{cmd}', getattr(self, f'api_{cmd}'))
         
         # Handle CORS preflight for all endpoints
@@ -1630,6 +1633,31 @@ class MusicBot(commands.Bot):
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500, headers=headers)
 
+    # --- NEW: Toggle Playback Endpoint ---
+    async def api_toggleplayback(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        
+        guild = self.get_guild(guild_id)
+        if not guild: 
+            return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+            
+        player = guild.voice_client
+        if not player or not player.current:
+            return web.json_response({"error": "Nothing is playing"}, status=400, headers=headers)
+            
+        try:
+            new_state = not player.paused
+            await player.pause(new_state)
+            await EmbedManager.update_status_message(self, guild_id)
+            
+            action_str = "paused" if new_state else "resumed"
+            return web.json_response({"success": True, "action": action_str, "is_paused": new_state}, headers=headers)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=headers)
+
+
     # ---------------------------------------------------------
     # CORE DISCORD EVENT HANDLERS
     # ---------------------------------------------------------
@@ -2000,6 +2028,22 @@ async def skip(ctx: commands.Context):
             await ctx.send(f"{Icons.SKIP} Enough votes reached ({len(state.skip_votes)}/{required}). Skipping!")
         else:
             await ctx.send(f"Voted to skip! ({len(state.skip_votes)}/{required} votes needed).", ephemeral=True)
+
+# --- NEW: Toggle Playback Command ---
+@bot.hybrid_command(name="toggleplayback", description="Pause or resume the current playing track.")
+@is_authorized(level=2)
+async def toggleplayback(ctx: commands.Context):
+    player: wavelink.Player = ctx.voice_client
+    if not player or not player.current:
+        return await ctx.send(f"{Icons.ERROR} Nothing is playing right now.", ephemeral=True)
+        
+    new_state = not player.paused
+    await player.pause(new_state)
+    
+    await EmbedManager.update_status_message(bot, ctx.guild.id)
+    
+    state_str = "Paused" if new_state else "Resumed"
+    await ctx.send(f"{Icons.SUCCESS} **{state_str}** playback.", ephemeral=True)
 
 @bot.hybrid_command(name="queue", description="Show the list of songs waiting to play.")
 @is_authorized(level=1000)

@@ -6,37 +6,61 @@ import SearchModal from './components/SearchModal';
 
 const discordSdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
 
-// --- UPDATED: Component to handle sneaky YouTube Thumbnail Fallbacks ---
+// --- UPDATED: Component to handle YouTube Thumbnail Fallbacks by checking HTTP Status ---
 const ThumbnailImage = ({ url, videoId }) => {
   const [src, setSrc] = useState(url);
 
-  // Keep the source synced if the song changes
   useEffect(() => {
-    setSrc(url);
-  }, [url]);
+    let isMounted = true;
 
-  const triggerFallback = () => {
-    // If we are currently trying to load maxres, fall back to the guaranteed hqdefault
-    if (src && src.includes('maxresdefault.jpg') && videoId) {
-      setSrc(`/yt-img/vi/${videoId}/hqdefault.jpg`);
-    }
-  };
+    const verifyThumbnail = async () => {
+      if (!url) return;
+      
+      // Default to the requested URL initially
+      setSrc(url);
 
-  const handleLoad = (e) => {
-    // YouTube returns a 120x90 gray image instead of a 404 when maxres is missing.
-    // If the loaded image is 120px wide or smaller, it's the fake image.
-    if (e.target.naturalWidth <= 120 && src.includes('maxresdefault.jpg')) {
-      triggerFallback();
-    }
-  };
+      // Only perform the explicit HTTP status check for maxresdefault
+      if (url.includes('maxresdefault.jpg') && videoId) {
+        try {
+          // We use fetch to explicitly read the HTTP status code.
+          // Because it's an image, the browser caches this GET request, 
+          // meaning the <img> tag below will load it instantly from cache without a second download.
+          const res = await fetch(url);
+          
+          if (isMounted) {
+            // Explicitly test for the 404 Not Found code
+            if (res.status === 404) {
+              setSrc(`/yt-img/vi/${videoId}/hqdefault.jpg`);
+            }
+          }
+        } catch (err) {
+          // If the network request completely fails, trigger the fallback safely
+          console.error("Thumbnail verification failed:", err);
+          if (isMounted) {
+            setSrc(`/yt-img/vi/${videoId}/hqdefault.jpg`);
+          }
+        }
+      }
+    };
+
+    verifyThumbnail();
+
+    return () => {
+      isMounted = false; // Cleanup to prevent state updates if the component unmounts quickly
+    };
+  }, [url, videoId]);
 
   return (
     <img 
       src={src} 
       alt="Album Art" 
       className="album-art" 
-      onLoad={handleLoad} 
-      onError={triggerFallback} // Keep onError just in case a true 404 slips through
+      // Keep a basic onError just in case a true empty 404 slips past the fetch check
+      onError={() => {
+        if (src.includes('maxresdefault.jpg') && videoId) {
+          setSrc(`/yt-img/vi/${videoId}/hqdefault.jpg`);
+        }
+      }}
     />
   );
 };

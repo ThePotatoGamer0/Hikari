@@ -83,14 +83,21 @@ export default function InfoModal({ isOpen, onClose, track, artUrl: initialArtUr
         </button>
         
         <div className="info-modal-header">
-          {/* NEW: The wrapper physically enforces the 1:1 square crop */}
           <div className="info-modal-art-wrapper">
             <img src={resolvedArt || ''} alt="Album Art" className="info-modal-art" />
           </div>
           <div className="info-modal-meta">
             <h2>{track.title}</h2>
             <h3>{track.author}</h3>
-            <span className="info-duration">{formatTime(track.length)}</span>
+            
+            {/* NEW: Badge wrapper for requester and duration */}
+            <div className="info-badges">
+              {track.requester && (
+                <span className="info-requester">{track.requester.split('#')[0]}</span>
+              )}
+              <span className="info-duration">{formatTime(track.length)}</span>
+            </div>
+            
           </div>
         </div>
 

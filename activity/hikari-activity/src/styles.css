@@ -73,7 +73,6 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
 }
 .left-panel.empty { color: var(--text-muted); }
 
-/* UPDATED: Album Art Container dynamic height fix */
 .album-art-container { 
   width: 100%; 
   max-width: min(400px, 45vh); 
@@ -130,7 +129,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   backdrop-filter: blur(10px);
   transition: all 0.2s ease;
   box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-  appearance: none; /* Hide default dropdown arrow for cleaner look */
+  appearance: none; 
   text-align: center;
 }
 
@@ -140,7 +139,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
 }
 
 .filter-select option {
-  background: var(--bg-dark); /* Solid background so dropdown text is readable */
+  background: var(--bg-dark); 
   color: var(--text-main);
   font-weight: normal;
 }
@@ -321,7 +320,6 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
     scroll-snap-align: start; 
   }
 
-  /* UPDATED: Mobile Album Art Container dynamic height fix */
   .album-art-container {
     max-width: min(300px, 45vh); 
   }
@@ -382,7 +380,6 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   justify-content: flex-end; 
 }
 
-/* UPDATED: PIP mode reset to allow stretching */
 .left-panel.pip .album-art-container {
   position: absolute;
   top: 0;
@@ -474,7 +471,6 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   color: white;
 }
 
-/* Danger items (like Delete/Remove) get a red hover instead of blurple */
 .context-menu-item.danger {
   color: #ff4a4a;
 }
@@ -548,7 +544,6 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   align-items: center;
 }
 
-/* NEW: STRICT 1:1 CROP FOR THE ALBUM ART */
 .info-modal-art-wrapper {
   width: 90px;
   height: 90px;
@@ -587,14 +582,30 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
   margin: 0;
 }
 
-.info-duration {
+/* NEW: Layout and specific highlights for modal badges */
+.info-badges {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.info-requester {
   font-size: 0.85rem;
   color: var(--accent);
-  background: rgba(88, 101, 242, 0.15);
+  background: rgba(88, 101, 242, 0.2); /* Purple Match */
   padding: 0.2rem 0.6rem;
   border-radius: 12px;
   width: fit-content;
-  margin-top: 0.3rem;
+}
+
+.info-duration {
+  font-size: 0.85rem;
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.15); /* Neutral Match */
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  width: fit-content;
 }
 
 .info-modal-details {

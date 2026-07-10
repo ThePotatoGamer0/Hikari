@@ -603,7 +603,7 @@ class EmbedManager:
         if player and player.current:
             track = player.current
             if track.is_stream:
-                progress_str = f"🔴 **LIVE** | `{EmbedManager.format_time(player.position)}`"
+                progress_str = f"閥 **LIVE** | `{EmbedManager.format_time(player.position)}`"
             else:
                 bar = EmbedManager.create_progress_bar(player.position, track.length)
                 progress_str = f"{bar} {EmbedManager.format_time(player.position)} / {EmbedManager.format_time(track.length)}"
@@ -738,7 +738,7 @@ class PlaybackControls(discord.ui.View):
         state = bot.music_manager.get_state(interaction.guild_id)
         
         if state.dj_lockdown and u_level >= 10:
-            return await send_temp_reply(interaction, "🔒 DJ Lockdown Mode is active. Only DJs and Admins can change the music right now.")
+            return await send_temp_reply(interaction, "白 DJ Lockdown Mode is active. Only DJs and Admins can change the music right now.")
 
         player = interaction.guild.voice_client
         if not player or not player.playing:
@@ -808,7 +808,7 @@ class PlaybackControls(discord.ui.View):
         state = bot.music_manager.get_state(interaction.guild_id)
         
         if state.dj_lockdown and u_level >= 10:
-            return await send_temp_reply(interaction, "🔒 DJ Lockdown Mode is active.")
+            return await send_temp_reply(interaction, "白 DJ Lockdown Mode is active.")
         if u_level > 2:
             return await send_temp_reply(interaction, f"{Icons.ERROR} Only DJs or Admins can toggle autoplay.")
 
@@ -831,7 +831,7 @@ class PlaybackControls(discord.ui.View):
         state = bot.music_manager.get_state(interaction.guild_id)
         
         if state.dj_lockdown and u_level >= 10:
-            return await send_temp_reply(interaction, "🔒 DJ Lockdown Mode is active.")
+            return await send_temp_reply(interaction, "白 DJ Lockdown Mode is active.")
         if u_level > 2:
             return await send_temp_reply(interaction, f"{Icons.ERROR} Only DJs or Admins can shuffle.")
 
@@ -849,7 +849,7 @@ class PlaybackControls(discord.ui.View):
         state = bot.music_manager.get_state(interaction.guild_id)
         
         if state.dj_lockdown and u_level >= 10:
-            return await send_temp_reply(interaction, "🔒 DJ Lockdown Mode is active.")
+            return await send_temp_reply(interaction, "白 DJ Lockdown Mode is active.")
         if u_level > 2:
             return await send_temp_reply(interaction, f"{Icons.ERROR} Only DJs or Admins can toggle loop.")
 
@@ -965,7 +965,7 @@ class LyricsPaginator(discord.ui.View):
 
     def generate_embed(self) -> discord.Embed:
         embed = discord.Embed(title=self.title, description=self.pages[self.current_page - 1], color=discord.Color.blurple())
-        embed.set_footer(text=f"Page {self.current_page}/{self.total_pages} • Source: {self.source}")
+        embed.set_footer(text=f"Page {self.current_page}/{self.total_pages} 窶｢ Source: {self.source}")
         return embed
 
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary, custom_id="lyrics_prev", emoji=Icons.PREV)
@@ -1070,8 +1070,11 @@ class MusicBot(commands.Bot):
         app.router.add_route('*', '/api/status/{guild_id}', self.api_get_status)
         app.router.add_route('*', '/api/lyrics', self.api_get_lyrics)
         
+        # Authentication Endpoint
+        app.router.add_route('*', '/api/token', self.api_token)
+        
         # Control Endpoints (Mapped explicitly to bot commands)
-        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc']:
+        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc', 'seek']:
             app.router.add_route('*', f'/api/{cmd}', getattr(self, f'api_{cmd}'))
         
         # Handle CORS preflight for all endpoints
@@ -1102,6 +1105,40 @@ class MusicBot(commands.Bot):
             except Exception:
                 pass
         return data
+
+    async def api_token(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        code = data.get('code')
+        
+        if not code:
+            return web.json_response({"error": "Missing authorization code"}, status=400, headers=headers)
+
+        client_id = os.getenv('DISCORD_CLIENT_ID')
+        client_secret = os.getenv('DISCORD_CLIENT_SECRET')
+
+        if not client_id or not client_secret:
+            logger.error("Missing DISCORD_CLIENT_ID or DISCORD_CLIENT_SECRET in environment variables.")
+            return web.json_response({"error": "OAuth credentials not configured on server"}, status=500, headers=headers)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://discord.com/api/oauth2/token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "grant_type": "authorization_code",
+                    "code": code,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            ) as resp:
+                token_data = await resp.json()
+                
+                if "access_token" in token_data:
+                    return web.json_response({"access_token": token_data["access_token"]}, headers=headers)
+                else:
+                    logger.error(f"Failed to exchange token with Discord: {token_data}")
+                    return web.json_response({"error": "Failed to exchange token", "details": token_data}, status=400, headers=headers)
 
     async def api_get_global_status(self, request: web.Request):
         headers = {"Access-Control-Allow-Origin": "*"}
@@ -1213,8 +1250,19 @@ class MusicBot(commands.Bot):
             p_data["voice_channel_id"] = vc.id
             self.persistence.save_persistence(guild_id, p_data)
             
-        requester_id = int(data.get('requester_id', guild.me.id))
-        requester = guild.get_member(requester_id) or guild.me
+        # --- Safe Requester Resolution with fetch_user Fallback ---
+        requester_id_raw = data.get('requester_id')
+        requester = guild.me
+        
+        if requester_id_raw:
+            try:
+                requester_id = int(requester_id_raw)
+                # Try cache first, fallback to a direct API fetch if not cached
+                requester = guild.get_member(requester_id) or await self.fetch_user(requester_id)
+            except (ValueError, TypeError, discord.HTTPException) as e:
+                logger.error(f"Failed to resolve requester profile: {e}")
+                requester = guild.me
+        # ----------------------------------------------------------
         
         async with state.playback_lock:
             if isinstance(tracks, wavelink.Playlist):
@@ -1266,8 +1314,19 @@ class MusicBot(commands.Bot):
             p_data["voice_channel_id"] = vc.id
             self.persistence.save_persistence(guild_id, p_data)
             
-        requester_id = int(data.get('requester_id', guild.me.id))
-        requester = guild.get_member(requester_id) or guild.me
+        # --- Safe Requester Resolution with fetch_user Fallback ---
+        requester_id_raw = data.get('requester_id')
+        requester = guild.me
+        
+        if requester_id_raw:
+            try:
+                requester_id = int(requester_id_raw)
+                # Try cache first, fallback to a direct API fetch if not cached
+                requester = guild.get_member(requester_id) or await self.fetch_user(requester_id)
+            except (ValueError, TypeError, discord.HTTPException) as e:
+                logger.error(f"Failed to resolve requester profile: {e}")
+                requester = guild.me
+        # ----------------------------------------------------------
         
         async with state.playback_lock:
             if isinstance(tracks, wavelink.Playlist):
@@ -1537,6 +1596,39 @@ class MusicBot(commands.Bot):
         self.persistence.save_persistence(guild_id, p_data)
         
         return web.json_response({"success": True, "moved_to": channel.name}, headers=headers)
+
+    # --- NEW: Seek Endpoint ---
+    async def api_seek(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        position = data.get('position')
+        
+        guild = self.get_guild(guild_id)
+        if not guild: 
+            return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+            
+        if position is None:
+            return web.json_response({"error": "Missing position parameter"}, status=400, headers=headers)
+            
+        try:
+            position_ms = int(position)
+        except ValueError:
+            return web.json_response({"error": "Position must be an integer (milliseconds)"}, status=400, headers=headers)
+            
+        player = guild.voice_client
+        if not player or not player.playing or not player.current:
+            return web.json_response({"error": "Nothing is playing right now"}, status=400, headers=headers)
+            
+        if position_ms < 0 or position_ms > player.current.length:
+            return web.json_response({"error": "Invalid seek position (out of bounds)"}, status=400, headers=headers)
+            
+        try:
+            await player.seek(position_ms)
+            await EmbedManager.update_status_message(self, guild_id)
+            return web.json_response({"success": True, "action": "seeked", "position": position_ms}, headers=headers)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=headers)
 
     # ---------------------------------------------------------
     # CORE DISCORD EVENT HANDLERS

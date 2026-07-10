@@ -10,14 +10,16 @@ export default function App() {
   const [guildId, setGuildId] = useState(null);
   const [status, setStatus] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
   
   // Track layout mode: 0 (Focused), 1 (PIP), 2 (Grid)
   const [layoutMode, setLayoutMode] = useState(0); 
   
-  // NEW: State to hold the asynchronously fetched SC artwork
+  // State to hold asynchronously fetched SoundCloud artwork
   const [scArtUrl, setScArtUrl] = useState(null);
-  
+
+  // State to track the authenticated user profile details
+  const [currentUser, setCurrentUser] = useState(null);
+
   const pollInterval = useRef(null);
 
   useEffect(() => {
@@ -31,10 +33,13 @@ export default function App() {
           console.error("Not in a server voice channel!");
         }
 
+        // Subscribe to PIP/Layout changes
         discordSdk.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', ({ layout_mode }) => {
           setLayoutMode(layout_mode);
         });
 
+        // --- DISCORD OAUTH2 HANDSHAKE FLOW ---
+        // 1. Request a temporary authorization code from the Discord client
         const { code } = await discordSdk.commands.authorize({
           client_id: import.meta.env.VITE_DISCORD_CLIENT_ID,
           response_type: 'code',
@@ -43,6 +48,7 @@ export default function App() {
           scope: ['identify']
         });
 
+        // 2. POST the code to your Python backend token exchange endpoint
         const tokenRes = await fetch('/api/token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -50,11 +56,14 @@ export default function App() {
         });
         const { access_token } = await tokenRes.json();
 
+        // 3. Finalize SDK client authentication using the returned access token
         const auth = await discordSdk.commands.authenticate({ access_token });
+        
+        // 4. Cache the verified user object in application state
         setCurrentUser(auth.user);
 
       } catch (err) {
-        console.error("Failed to initialize Discord SDK:", err);
+        console.error("Failed to initialize Discord SDK Flow:", err);
       }
     }
     setupDiscord();
@@ -81,11 +90,9 @@ export default function App() {
     return () => clearInterval(pollInterval.current);
   }, [guildId]);
 
-  // --- NEW: Fetch SoundCloud Artwork ---
+  // Handle asynchronous SoundCloud oEmbed artwork resolving
   useEffect(() => {
     const track = status?.current_track;
-    
-    // If it's not a SC track, wipe the state and ignore
     if (!track || !track.uri.includes('soundcloud.com')) {
       setScArtUrl(null);
       return;
@@ -93,20 +100,13 @@ export default function App() {
 
     const fetchSoundcloudArt = async () => {
       try {
-        // Ask SoundCloud for the track data using our new API proxy
         const res = await fetch(`/sc-api/oembed?format=json&url=${encodeURIComponent(track.uri)}`);
-        
         if (res.ok) {
           const data = await res.json();
           if (data.thumbnail_url) {
-            // SC gives us a full URL (e.g., https://i1.sndcdn.com/artworks-123.jpg)
-            // We just extract the path and route it through our Discord Image Proxy
             const urlObj = new URL(data.thumbnail_url);
             let proxyPath = `/sc-img${urlObj.pathname}`;
-            
-            // Force the API to give us the high-res 500x500 image instead of the blurry thumbnail
             proxyPath = proxyPath.replace('-t400x400.jpg', '-t500x500.jpg').replace('-large.jpg', '-t500x500.jpg');
-            
             setScArtUrl(proxyPath);
           }
         }
@@ -116,11 +116,12 @@ export default function App() {
     };
 
     fetchSoundcloudArt();
-  }, [status?.current_track?.uri]); // Only re-run this if the URI actually changes
+  }, [status?.current_track?.uri]);
 
   const handleAction = async (endpoint, payload = {}) => {
     if (!guildId) return;
-    
+
+    // Build the payload by securely adding the active user's Snowflake ID 
     const enhancedPayload = {
       ...payload,
       requester_id: currentUser?.id,
@@ -145,13 +146,11 @@ export default function App() {
   const track = status?.current_track;
   let artUrl = null;
   
-  // --- UPDATED: Merge YouTube and SoundCloud logic ---
   if (track) {
     if (track.uri.includes('youtube.com') || track.uri.includes('youtu.be')) {
       const videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
       artUrl = `/yt-img/vi/${videoId}/maxresdefault.jpg`;
     } else if (track.uri.includes('soundcloud.com')) {
-      // Plug in our dynamically fetched SC artwork here
       artUrl = scArtUrl; 
     }
   }

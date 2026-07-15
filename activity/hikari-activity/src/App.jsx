@@ -1,3 +1,4 @@
+// activity/hikari-activity/src/App.jsx
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { DiscordSDK } from '@discord/embedded-app-sdk';
 import LeftPanel from './components/LeftPanel';
@@ -10,15 +11,14 @@ const discordSdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
 export default function App() {
   const [guildId, setGuildId] = useState(null);
   const [status, setStatus] = useState(null);
-  
   const [isModalOpen, setIsModalOpen] = useState(false);
-  
-  // NEW: Store the specific track object to display in the Info Modal
   const [infoModalTrack, setInfoModalTrack] = useState(null); 
-  
   const [layoutMode, setLayoutMode] = useState(0); 
   const [resolvedArtUrl, setResolvedArtUrl] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
+  
+  // Cache state for user's personal favorites list
+  const [userFavorites, setUserFavorites] = useState([]);
 
   const pollInterval = useRef(null);
 
@@ -85,6 +85,71 @@ export default function App() {
     }
   }, [currentUser]);
 
+  // Fetch Favorites Cache Hook
+  const fetchFavoritesCache = useCallback(async (userId) => {
+    try {
+      const res = await fetch(`/api/favorites?discord_id=${userId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setUserFavorites(data.favorites || []);
+      }
+    } catch (e) {
+      console.error("Failed to populate user library cache:", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentUser?.id) {
+      fetchFavoritesCache(currentUser.id);
+    }
+  }, [currentUser?.id, fetchFavoritesCache]);
+
+  // Two-Fold Optimistic Favorite Mutator Loop
+  const handleFavoriteToggle = async (track) => {
+    const user = await ensureAuthenticated();
+    if (!user) throw new Error("Authentication required");
+
+    const identifier = track.identifier || track.uri;
+    const trackingId = track.lavalink_identifier || identifier;
+    const isCurrentlyFav = userFavorites.some(f => f.lavalink_identifier === trackingId);
+
+    // Step 1: Optimistic State Update
+    let updatedList;
+    if (isCurrentlyFav) {
+      updatedList = userFavorites.filter(f => f.lavalink_identifier !== trackingId);
+    } else {
+      updatedList = [...userFavorites, {
+        lavalink_identifier: trackingId,
+        title: track.title,
+        author: track.author,
+        uri: track.uri || trackingId
+      }];
+    }
+    setUserFavorites(updatedList);
+
+    // Step 2: Dispatch Network Payload
+    try {
+      const res = await fetch('/api/favorites', {
+        method: isCurrentlyFav ? 'DELETE' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          discord_id: user.id,
+          lavalink_identifier: trackingId,
+          title: track.title,
+          author: track.author,
+          duration_ms: track.length || 0
+        })
+      });
+
+      if (!res.ok) throw new Error("Server rejected state change");
+      await fetchFavoritesCache(user.id); // Sync database sequence
+    } catch (err) {
+      // Revert cache state if transaction fails
+      await fetchFavoritesCache(user.id);
+      throw err; 
+    }
+  };
+
   useEffect(() => {
     if (!guildId) return;
     const fetchStatus = async () => {
@@ -102,6 +167,11 @@ export default function App() {
     pollInterval.current = setInterval(fetchStatus, 2000);
     return () => clearInterval(pollInterval.current);
   }, [guildId]);
+
+  useEffect(() => {
+    if (currentUser) return;
+    ensureAuthenticated();
+  }, [ensureAuthenticated, currentUser]);
 
   useEffect(() => {
     const track = status?.current_track;
@@ -168,12 +238,11 @@ export default function App() {
     }
   };
 
-  // NEW: Quick fallback generator for queue items (since they aren't pre-resolved by App.jsx)
   const getFallbackArtUrl = (track) => {
     if (!track) return null;
-    if (track.uri.includes('youtube.com') || track.uri.includes('youtu.be')) {
+    if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
       const ytVideoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
-      return `/yt-img/vi/${ytVideoId}/hqdefault.jpg`; // Safe fallback for queue items
+      return `/yt-img/vi/${ytVideoId}/hqdefault.jpg`; 
     }
     return null; 
   };
@@ -196,8 +265,9 @@ export default function App() {
         onAction={handleAction} 
         artUrl={resolvedArtUrl} 
         isPip={layoutMode !== 0} 
-        // Pass the current playing track into the modal state
         openInfoModal={() => setInfoModalTrack(status?.current_track)} 
+        userFavorites={userFavorites}
+        onFavoriteToggle={handleFavoriteToggle}
       />
       
       {layoutMode === 0 && (
@@ -206,22 +276,21 @@ export default function App() {
             status={status} 
             onAction={handleAction} 
             openModal={() => setIsModalOpen(true)} 
-            // Allows the right panel to pass a specific queue track to the modal
             openInfoModal={(track) => setInfoModalTrack(track)} 
             guildId={guildId}
+            userFavorites={userFavorites}
+            onFavoriteToggle={handleFavoriteToggle}
+            currentUser={currentUser}
           />
           <SearchModal 
             isOpen={isModalOpen} 
             onClose={() => setIsModalOpen(false)} 
             onAction={handleAction} 
           />
-          {/* UPDATED RENDER */}
           <InfoModal 
             isOpen={!!infoModalTrack} 
             onClose={() => setInfoModalTrack(null)} 
             track={infoModalTrack} 
-            // If the modal is viewing the currently playing track, use the verified high-res art. 
-            // Otherwise, use the standard resolution queue fallback URL.
             artUrl={infoModalTrack?.uid === status?.current_track?.uid ? resolvedArtUrl : getFallbackArtUrl(infoModalTrack)} 
           />
         </>

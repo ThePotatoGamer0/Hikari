@@ -105,7 +105,6 @@ export default function App() {
     const user = await ensureAuthenticated();
     if (!user) throw new Error("Authentication required");
 
-    // Fix: Prioritize absolute URI over Lavalink identifier to ensure SoundCloud URLs bypass the search engine
     const bestIdentifier = track.uri || track.identifier;
     const trackingId = track.lavalink_identifier || bestIdentifier;
     const isCurrentlyFav = userFavorites.some(f => f.lavalink_identifier === trackingId);
@@ -177,14 +176,14 @@ export default function App() {
     if (track.uri.includes('youtube.com') || track.uri.includes('youtu.be')) {
       const ytVideoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
       const maxRes = `/yt-img/vi/${ytVideoId}/maxresdefault.jpg`;
-      const hqRes = `/yt-img/vi/${ytVideoId}/hqdefault.jpg`;
+      const mqRes = `/yt-img/vi/${ytVideoId}/mqdefault.jpg`;
 
       const img = new window.Image();
       img.onload = () => {
-        if (img.naturalWidth <= 120) setResolvedArtUrl(hqRes); 
+        if (img.naturalWidth <= 120) setResolvedArtUrl(mqRes); 
         else setResolvedArtUrl(maxRes); 
       };
-      img.onerror = () => setResolvedArtUrl(hqRes); 
+      img.onerror = () => setResolvedArtUrl(mqRes); 
       img.src = maxRes;
 
     } else if (track.uri.includes('soundcloud.com')) {
@@ -234,9 +233,10 @@ export default function App() {
 
   const getFallbackArtUrl = (track) => {
     if (!track) return null;
+    if (track.artworkUrl || track.artwork) return track.artworkUrl || track.artwork;
     if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
       const ytVideoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
-      return `/yt-img/vi/${ytVideoId}/hqdefault.jpg`; 
+      return `/yt-img/vi/${ytVideoId}/mqdefault.jpg`; 
     }
     return null; 
   };

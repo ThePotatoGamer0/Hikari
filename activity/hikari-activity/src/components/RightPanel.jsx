@@ -201,7 +201,6 @@ export default function RightPanel({
                     context="queue"
                     index={queueTrack.originalIndex} 
                     onAction={onAction}
-                    // Fix: Prioritize URI checking
                     isFavorited={userFavorites.some(f => f.lavalink_identifier === (queueTrack.lavalink_identifier || queueTrack.uri || queueTrack.identifier))}
                     onFavoriteToggle={onFavoriteToggle}
                     openInfoModal={openInfoModal}
@@ -270,11 +269,11 @@ export default function RightPanel({
                     title: searchTrack.info?.title || searchTrack.title,
                     author: searchTrack.info?.author || searchTrack.author,
                     uri: searchTrack.info?.uri || searchTrack.uri,
-                    identifier: searchTrack.info?.identifier || searchTrack.identifier
+                    identifier: searchTrack.info?.identifier || searchTrack.identifier,
+                    artworkUrl: searchTrack.info?.artworkUrl || searchTrack.artworkUrl
                   }}
                   context="search"
                   onAction={onAction}
-                  // Fix: Prioritize URI checking
                   isFavorited={userFavorites.some(f => f.lavalink_identifier === (searchTrack.info?.uri || searchTrack.uri || searchTrack.info?.identifier || searchTrack.identifier))}
                   onFavoriteToggle={onFavoriteToggle}
                   openInfoModal={openInfoModal}

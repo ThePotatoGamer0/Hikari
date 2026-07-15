@@ -1063,7 +1063,6 @@ class MusicBot(commands.Bot):
             )
             logger.info("MariaDB Connection Pool initialized successfully.")
             
-            # ---> NEW: Initialize database tables <---
             async with self.db_pool.acquire() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute('''
@@ -1086,7 +1085,6 @@ class MusicBot(commands.Bot):
                         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
                     ''')
             logger.info("Database tables verified/created successfully.")
-            # ----------------------------------------
             
         except Exception as e:
             logger.error(f"Failed to initialize MariaDB Connection Pool or Tables: {e}")
@@ -1209,7 +1207,8 @@ class MusicBot(commands.Bot):
                 "title": req.track.title,
                 "author": req.track.author,
                 "uri": req.track.uri,
-                "identifier": getattr(req.track, 'identifier', ""), # ADDED: Enables perfect favorite mapping
+                "identifier": getattr(req.track, 'identifier', ""), 
+                "artworkUrl": getattr(req.track, 'artwork', ""), # Added native artwork extraction
                 "length": getattr(req.track, 'length', 0),
                 "requester": str(req.requester),
                 "uid": req.uid
@@ -1221,7 +1220,8 @@ class MusicBot(commands.Bot):
                 "title": player.current.title,
                 "author": player.current.author,
                 "uri": player.current.uri,
-                "identifier": getattr(player.current, 'identifier', ""), # ADDED
+                "identifier": getattr(player.current, 'identifier', ""), 
+                "artworkUrl": getattr(player.current, 'artwork', ""), # Added native artwork extraction
                 "length": getattr(player.current, 'length', 0),
                 "position": player.position,
                 "is_paused": player.paused

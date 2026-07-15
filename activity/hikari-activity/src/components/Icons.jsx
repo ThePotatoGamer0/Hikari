@@ -13,8 +13,7 @@ import {
   Pause,
   MoreHorizontal,
   Info,
-  Heart,
-  Waves // Using Waves as a sleek stand-in for Wavelink/Lavalink
+  Heart
 } from 'lucide-react';
 
 import { 
@@ -71,6 +70,5 @@ export default {
   ReactLogo: <SimpleIcon icon={siReact} color="#61DAFB" size={26} />,
   ViteLogo: <SimpleIcon icon={siVite} color="#646CFF" size={26} />,
   PythonLogo: <SimpleIcon icon={siPython} color="#3776AB" size={26} />,
-  MariaDBLogo: <SimpleIcon icon={siMariadb} color="#FFFFFF" size={26} />, // White outline for dark mode visibility
-  LavalinkLogo: <Waves size={26} color="#7289da" /> // Lucide stand-in matching the "Wave" in Wavelink
+  MariaDBLogo: <SimpleIcon icon={siMariadb} color="#FFFFFF" size={26} /> // White outline for dark mode visibility
 };

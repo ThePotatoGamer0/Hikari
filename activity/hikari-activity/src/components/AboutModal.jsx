@@ -36,7 +36,7 @@ export default function AboutModal({ isOpen, onClose }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', fontSize: '0.95rem', color: '#dbdee1' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span><strong>Version:</strong></span>
-            <span>1.0.0</span>
+            <span>2.5.0</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span><strong>Author:</strong></span>
@@ -44,7 +44,7 @@ export default function AboutModal({ isOpen, onClose }) {
           </div>
           
           <div style={{ marginTop: '0.5rem' }}>
-            <strong>Tech Stack:</strong>
+            <strong>Built with:</strong>
             <div style={{ display: 'flex', gap: '1.2rem', marginTop: '0.8rem', alignItems: 'center' }}>
               <div title="React" style={{ cursor: 'help', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s' }} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
                 {Icons.ReactLogo}
@@ -56,7 +56,7 @@ export default function AboutModal({ isOpen, onClose }) {
                 {Icons.PythonLogo}
               </div>
               <div title="Wavelink / Lavalink" style={{ cursor: 'help', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s' }} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
-                {Icons.LavalinkLogo}
+                <img src="/lavalink.svg" alt="Lavalink" style={{ width: '26px', height: '26px' }} />
               </div>
               <div title="MariaDB" style={{ cursor: 'help', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s' }} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
                 {Icons.MariaDBLogo}

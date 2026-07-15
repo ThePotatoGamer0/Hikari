@@ -16,7 +16,6 @@ export default function App() {
   const [resolvedArtUrl, setResolvedArtUrl] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   
-  // Cache state for user's personal favorites list
   const [userFavorites, setUserFavorites] = useState([]);
 
   const pollInterval = useRef(null);
@@ -84,7 +83,6 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Fetch Favorites Cache Hook
   const fetchFavoritesCache = useCallback(async (userId) => {
     try {
       const res = await fetch(`/api/favorites?discord_id=${userId}`);
@@ -103,16 +101,15 @@ export default function App() {
     }
   }, [currentUser?.id, fetchFavoritesCache]);
 
-  // Two-Fold Optimistic Favorite Mutator Loop
   const handleFavoriteToggle = async (track) => {
     const user = await ensureAuthenticated();
     if (!user) throw new Error("Authentication required");
 
-    const identifier = track.identifier || track.uri;
-    const trackingId = track.lavalink_identifier || identifier;
+    // Fix: Prioritize absolute URI over Lavalink identifier to ensure SoundCloud URLs bypass the search engine
+    const bestIdentifier = track.uri || track.identifier;
+    const trackingId = track.lavalink_identifier || bestIdentifier;
     const isCurrentlyFav = userFavorites.some(f => f.lavalink_identifier === trackingId);
 
-    // Step 1: Optimistic State Update
     let updatedList;
     if (isCurrentlyFav) {
       updatedList = userFavorites.filter(f => f.lavalink_identifier !== trackingId);
@@ -126,7 +123,6 @@ export default function App() {
     }
     setUserFavorites(updatedList);
 
-    // Step 2: Dispatch Network Payload
     try {
       const res = await fetch('/api/favorites', {
         method: isCurrentlyFav ? 'DELETE' : 'POST',
@@ -141,9 +137,8 @@ export default function App() {
       });
 
       if (!res.ok) throw new Error("Server rejected state change");
-      await fetchFavoritesCache(user.id); // Sync database sequence
+      await fetchFavoritesCache(user.id);
     } catch (err) {
-      // Revert cache state if transaction fails
       await fetchFavoritesCache(user.id);
       throw err; 
     }

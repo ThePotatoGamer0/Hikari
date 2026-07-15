@@ -21,14 +21,12 @@ export default function RightPanel({
   const [queueSearch, setQueueSearch] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
   
-  // Lyrics Engine State
   const [lyricsData, setLyricsData] = useState([]);
   const [lyricsStatus, setLyricsStatus] = useState("Loading...");
   const [localPos, setLocalPos] = useState(0);
   const [lyricOffset, setLyricOffset] = useState(0);
   const [isAutoScroll, setIsAutoScroll] = useState(true);
 
-  // Search Engine State
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searchStatus, setSearchStatus] = useState('');
@@ -82,7 +80,6 @@ export default function RightPanel({
     fetchSyncedLyrics();
   }, [activeTab, track?.title]);
 
-  // Automated Lavalink Recommendation Engine Effect
   useEffect(() => {
     if (activeTab !== 'search') return;
     
@@ -93,7 +90,6 @@ export default function RightPanel({
       return () => clearTimeout(delayDebounce);
     }
 
-    // Default Fallback State (Lavalink Automated Suggestions)
     if (!track) {
       setSearchResults([]);
       setSearchStatus("Search for a track or play something to see suggestions.");
@@ -182,7 +178,6 @@ export default function RightPanel({
         className="tab-content" ref={scrollRef}
         onWheel={handleUserInteraction} onTouchMove={handleUserInteraction} onMouseDown={handleUserInteraction}
       >
-        {/* TAB 1: LIVE QUEUE */}
         {activeTab === 'queue' && (
           <div className="queue-tab-wrapper">
             {rawQueue.length > 0 && (
@@ -206,7 +201,8 @@ export default function RightPanel({
                     context="queue"
                     index={queueTrack.originalIndex} 
                     onAction={onAction}
-                    isFavorited={userFavorites.some(f => f.lavalink_identifier === (queueTrack.identifier || queueTrack.uri))}
+                    // Fix: Prioritize URI checking
+                    isFavorited={userFavorites.some(f => f.lavalink_identifier === (queueTrack.lavalink_identifier || queueTrack.uri || queueTrack.identifier))}
                     onFavoriteToggle={onFavoriteToggle}
                     openInfoModal={openInfoModal}
                   />
@@ -216,7 +212,6 @@ export default function RightPanel({
           </div>
         )}
 
-        {/* TAB 2: LYRICS */}
         {activeTab === 'lyrics' && (
           <div className="synced-lyrics-container">
             {lyricsStatus && <div className="empty-state">{lyricsStatus}</div>}
@@ -240,7 +235,6 @@ export default function RightPanel({
           </div>
         )}
 
-        {/* TAB 3: CONSOLIDATED EXCLUSIVE SEARCH */}
         {activeTab === 'search' && (
           <div className="queue-tab-wrapper">
             <div className="queue-search-wrapper" style={{ display: 'flex', gap: '0.5rem' }}>
@@ -280,7 +274,8 @@ export default function RightPanel({
                   }}
                   context="search"
                   onAction={onAction}
-                  isFavorited={userFavorites.some(f => f.lavalink_identifier === (searchTrack.info?.identifier || searchTrack.identifier || searchTrack.info?.uri || searchTrack.uri))}
+                  // Fix: Prioritize URI checking
+                  isFavorited={userFavorites.some(f => f.lavalink_identifier === (searchTrack.info?.uri || searchTrack.uri || searchTrack.info?.identifier || searchTrack.identifier))}
                   onFavoriteToggle={onFavoriteToggle}
                   openInfoModal={openInfoModal}
                 />
@@ -289,7 +284,6 @@ export default function RightPanel({
           </div>
         )}
 
-        {/* TAB 4: PERSONAL FAVORITES POOL */}
         {activeTab === 'favorites' && (
           <div className="queue-tab-wrapper">
             <div style={{ padding: '0 0.5rem 0.5rem 0.5rem' }}>

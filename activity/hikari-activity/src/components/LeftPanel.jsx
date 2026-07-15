@@ -40,7 +40,8 @@ export default function LeftPanel({
   const [flashState, setFlashState] = useState(null);
 
   const track = status?.current_track;
-  const isFavorited = track && userFavorites.some(f => f.lavalink_identifier === (track.lavalink_identifier || track.identifier || track.uri));
+  // Fix: Prioritize URI checking
+  const isFavorited = track && userFavorites.some(f => f.lavalink_identifier === (track.lavalink_identifier || track.uri || track.identifier));
 
   useEffect(() => {
     if (!track || track.is_paused) return;

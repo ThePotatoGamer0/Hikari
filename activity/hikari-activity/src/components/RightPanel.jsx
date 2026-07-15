@@ -303,7 +303,7 @@ export default function RightPanel({
                     track={{
                       title: favTrack.title,
                       author: favTrack.author,
-                      uri: favTrack.uri,
+                      uri: favTrack.uri || favTrack.lavalink_identifier,
                       lavalink_identifier: favTrack.lavalink_identifier
                     }}
                     context="favorites"

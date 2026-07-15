@@ -20,6 +20,7 @@ export default function App() {
 
   const pollInterval = useRef(null);
 
+  // Reusable formatProxyUrl for InfoModal and App Background
   const formatProxyUrl = (url) => {
     if (!url) return null;
     try {
@@ -301,11 +302,27 @@ export default function App() {
     return <div className="loading">Connecting to Voice Channel...</div>;
   }
 
+  // Define the hardware-accelerated ambient flow animation
+  const ambientStyles = `
+    @keyframes ambientFlow {
+      0% { transform: scale(1.1) translate(0%, 0%) rotate(0deg); }
+      33% { transform: scale(1.25) translate(1.5%, 2%) rotate(1deg); }
+      66% { transform: scale(1.15) translate(-1.5%, -1.5%) rotate(-1deg); }
+      100% { transform: scale(1.1) translate(0%, 0%) rotate(0deg); }
+    }
+    .ambient-flow {
+      animation: ambientFlow 25s ease-in-out infinite;
+      will-change: transform;
+    }
+  `;
+
   return (
     <div className="app-container">
+      <style>{ambientStyles}</style>
+      
       {resolvedArtUrl && (
         <div 
-          className="blurred-background" 
+          className="blurred-background ambient-flow" 
           style={{ backgroundImage: `url(${resolvedArtUrl})` }}
         />
       )}

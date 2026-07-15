@@ -302,27 +302,39 @@ export default function App() {
     return <div className="loading">Connecting to Voice Channel...</div>;
   }
 
-  // Define the hardware-accelerated ambient flow animation
+  // Hardware-accelerated flow combined with SVG perlin noise displacement
   const ambientStyles = `
     @keyframes ambientFlow {
-      0% { transform: scale(1.1) translate(0%, 0%) rotate(0deg); }
-      33% { transform: scale(1.25) translate(1.5%, 2%) rotate(1deg); }
-      66% { transform: scale(1.15) translate(-1.5%, -1.5%) rotate(-1deg); }
-      100% { transform: scale(1.1) translate(0%, 0%) rotate(0deg); }
+      0% { transform: scale(1.3) translate(0%, 0%); }
+      33% { transform: scale(1.4) translate(3%, 4%); }
+      66% { transform: scale(1.35) translate(-3%, -2%); }
+      100% { transform: scale(1.3) translate(0%, 0%); }
     }
     .ambient-flow {
       animation: ambientFlow 25s ease-in-out infinite;
       will-change: transform;
+    }
+    .perlin-swirl {
+      /* Force a heavy blur first, then distort it using the SVG noise map */
+      filter: blur(80px) url(#perlin-noise); 
     }
   `;
 
   return (
     <div className="app-container">
       <style>{ambientStyles}</style>
+
+      {/* Hidden SVG Filter Definition for the Perlin Noise Swirl */}
+      <svg style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}>
+        <filter id="perlin-noise" x="-20%" y="-20%" width="140%" height="140%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="3" result="noise" />
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="80" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+      </svg>
       
       {resolvedArtUrl && (
         <div 
-          className="blurred-background ambient-flow" 
+          className="blurred-background ambient-flow perlin-swirl" 
           style={{ backgroundImage: `url(${resolvedArtUrl})` }}
         />
       )}

@@ -20,7 +20,6 @@ export default function App() {
 
   const pollInterval = useRef(null);
 
-  // Reusable formatProxyUrl for InfoModal and App Background
   const formatProxyUrl = (url) => {
     if (!url) return null;
     try {
@@ -196,7 +195,6 @@ export default function App() {
       return;
     }
 
-    // Only bypass the smart check if the artwork is definitively from a premium source (YTM/SC)
     if (track.artworkUrl || track.artwork) {
       const art = track.artworkUrl || track.artwork;
       if (art.includes('googleusercontent.com') || art.includes('ggpht.com') || art.includes('sndcdn.com')) {
@@ -205,7 +203,6 @@ export default function App() {
       }
     }
 
-    // For standard YouTube, run the smart 1080p maxresdefault fallback logic
     if (track.uri.includes('youtube.com') || track.uri.includes('youtu.be')) {
       const ytVideoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
       const maxRes = `/yt-img/vi/${ytVideoId}/maxresdefault.jpg`;
@@ -302,21 +299,29 @@ export default function App() {
     return <div className="loading">Connecting to Voice Channel...</div>;
   }
 
-  // Hardware-accelerated flow combined with SVG perlin noise displacement
+  // Smooth, GPU-accelerated CSS flow with a film-grain anti-banding overlay
   const ambientStyles = `
     @keyframes ambientFlow {
-      0% { transform: scale(1.3) translate(0%, 0%); }
-      33% { transform: scale(1.4) translate(3%, 4%); }
-      66% { transform: scale(1.35) translate(-3%, -2%); }
-      100% { transform: scale(1.3) translate(0%, 0%); }
+      0% { transform: scale(1.2) translate(0%, 0%) rotate(0deg); }
+      33% { transform: scale(1.3) translate(2%, 3%) rotate(1deg); }
+      66% { transform: scale(1.25) translate(-2%, -1%) rotate(-1deg); }
+      100% { transform: scale(1.2) translate(0%, 0%) rotate(0deg); }
     }
     .ambient-flow {
-      animation: ambientFlow 25s ease-in-out infinite;
+      animation: ambientFlow 25s ease-in-out infinite alternate;
       will-change: transform;
+      /* Increased saturation makes the colors pop underneath the UI */
+      filter: blur(80px) saturate(150%);
     }
-    .perlin-swirl {
-      /* Force a heavy blur first, then distort it using the SVG noise map */
-      filter: blur(80px) url(#perlin-noise); 
+    .grain-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      /* Base64 encoded repeating SVG noise to act as a dithering layer */
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+      opacity: 0.08;
+      mix-blend-mode: screen;
     }
   `;
 
@@ -324,19 +329,14 @@ export default function App() {
     <div className="app-container">
       <style>{ambientStyles}</style>
 
-      {/* Hidden SVG Filter Definition for the Perlin Noise Swirl */}
-      <svg style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}>
-        <filter id="perlin-noise" x="-20%" y="-20%" width="140%" height="140%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="3" result="noise" />
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="80" xChannelSelector="R" yChannelSelector="G" />
-        </filter>
-      </svg>
-      
       {resolvedArtUrl && (
-        <div 
-          className="blurred-background ambient-flow perlin-swirl" 
-          style={{ backgroundImage: `url(${resolvedArtUrl})` }}
-        />
+        <>
+          <div 
+            className="blurred-background ambient-flow" 
+            style={{ backgroundImage: `url(${resolvedArtUrl})` }}
+          />
+          <div className="grain-overlay" />
+        </>
       )}
       
       <LeftPanel 

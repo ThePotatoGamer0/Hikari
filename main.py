@@ -13,6 +13,7 @@ import math
 import aiohttp
 import re
 import time
+import aiomysql
 from aiohttp import web
 from collections import deque
 from spotipy.oauth2 import SpotifyClientCredentials
@@ -109,7 +110,7 @@ class Icons:
     NEXT = "<:play_white:1523496655893303376>"
     FIRST = "<:fastforward_flipped_white:1523496631658479749>"
     LAST = "<:fastforward_white:1523496632602071200>"
-    CLOSE = "<:x_white:1523496709769003191>"
+    CLOSE = "<:x_white:1523497109769003191>"
     TOOLS = "<:wrench_white:1523496706321285120>"
     BAR_START = "<:SeekBar_SolidStart:1523497100086739097>"
     BAR_END = "<:SeekBar_SolidDarkEnd:1523497099575037952>"
@@ -1039,6 +1040,7 @@ class MusicBot(commands.Bot):
         self.persistence = PersistenceManager()
         self.music_manager = MusicManager(self)
         self.api_runner = None
+        self.db_pool = None
 
     async def get_context(self, message: discord.Message, *, cls=None):
         return await super().get_context(message, cls=cls or HikariContext)
@@ -1050,6 +1052,20 @@ class MusicBot(commands.Bot):
         self.add_view(PlaybackControls())
         logger.info("Wavelink nodes configured and persistent UI views registered.")
         
+        # Initialize MariaDB Connection Pool
+        try:
+            self.db_pool = await aiomysql.create_pool(
+                host=os.getenv('DB_HOST', 'db'),
+                user=os.getenv('DB_USER', 'hikari_user'),
+                password=os.getenv('DB_PASSWORD', 'your_strong_user_password'),
+                db=os.getenv('DB_NAME', 'hikari_music'),
+                autocommit=True
+            )
+            logger.info("MariaDB Connection Pool initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize MariaDB Connection Pool: {e}")
+            self.db_pool = None
+
         # Start the REST API cleanly as a parasitic background task
         self.loop.create_task(self._safe_start_api_server())
 
@@ -1076,7 +1092,7 @@ class MusicBot(commands.Bot):
         app.router.add_route('*', '/api/token', self.api_token)
         
         # Control Endpoints (Mapped explicitly to bot commands)
-        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc', 'seek', 'toggleplayback']:
+        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc', 'seek', 'toggleplayback', 'favadd']:
             app.router.add_route('*', f'/api/{cmd}', getattr(self, f'api_{cmd}'))
         
         # Handle CORS preflight for all endpoints
@@ -1656,6 +1672,32 @@ class MusicBot(commands.Bot):
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500, headers=headers)
 
+    async def api_favadd(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        
+        guild = self.get_guild(guild_id)
+        if not guild: 
+            return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+            
+        state = self.music_manager.get_state(guild_id)
+        vc_id = data.get('voice_channel_id') or state.voice_channel_id
+        if not vc_id: 
+            return web.json_response({"error": "No voice channel provided or active"}, status=400, headers=headers)
+            
+        requester_id_raw = data.get('requester_id')
+        requester = guild.me
+        if requester_id_raw:
+            try:
+                requester_id = int(requester_id_raw)
+                requester = guild.get_member(requester_id) or await self.fetch_user(requester_id)
+            except Exception:
+                pass
+
+        count = await self.fill_queue_from_vc_favorites(guild_id, int(vc_id), requester)
+        return web.json_response({"success": True, "added_count": count}, headers=headers)
+
 
     # ---------------------------------------------------------
     # CORE DISCORD EVENT HANDLERS
@@ -1690,6 +1732,11 @@ class MusicBot(commands.Bot):
         # Cleanly shutdown the API server if it is running
         if self.api_runner:
             await self.api_runner.cleanup()
+
+        # Cleanly shutdown MariaDB pool if it exists
+        if self.db_pool:
+            self.db_pool.close()
+            await self.db_pool.wait_closed()
             
         for s in self.music_manager.states.values():
             if s.updater_task and not s.updater_task.done(): s.updater_task.cancel()
@@ -1724,6 +1771,69 @@ class MusicBot(commands.Bot):
             os.rename("bot.log", f"bot-{timestamp}.log")
             logger.info(f"Log file renamed to bot-{timestamp}.log")
         await super().close()
+
+    async def fill_queue_from_vc_favorites(self, guild_id: int, voice_channel_id: int, requester: Union[discord.Member, discord.User]) -> int:
+        guild = self.get_guild(guild_id)
+        if not guild:
+            return 0
+        vc = guild.get_channel(voice_channel_id)
+        if not vc or not isinstance(vc, (discord.VoiceChannel, discord.StageChannel)):
+            return 0
+        
+        member_ids = [str(m.id) for m in vc.members if not m.bot]
+        if not member_ids:
+            return 0
+            
+        state = self.music_manager.get_state(guild_id)
+        tracks_to_add = []
+        
+        if self.db_pool:
+            async with self.db_pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cur:
+                    format_strings = ','.join(['%s'] * len(member_ids))
+                    query = f"""
+                        SELECT DISTINCT t.lavalink_identifier, t.title
+                        FROM tracks t
+                        JOIN user_favorites uf ON t.track_id = uf.track_id
+                        WHERE uf.discord_id IN ({format_strings})
+                    """
+                    await cur.execute(query, tuple(member_ids))
+                    rows = await cur.fetchall()
+                    for row in rows:
+                        tracks_to_add.append(row)
+        
+        if not tracks_to_add:
+            return 0
+            
+        random.shuffle(tracks_to_add)
+        
+        player = guild.voice_client
+        if not player:
+            player = await vc.connect(cls=wavelink.Player)
+            state.voice_channel_id = vc.id
+            p_data = self.persistence.load_persistence(guild_id)
+            p_data["voice_channel_id"] = vc.id
+            self.persistence.save_persistence(guild_id, p_data)
+            
+        count = 0
+        for t_info in tracks_to_add:
+            try:
+                resolved_tracks = await wavelink.Playable.search(t_info['lavalink_identifier'])
+                if resolved_tracks:
+                    await state.queue.enqueue(TrackRequest(resolved_tracks[0], requester))
+                    count += 1
+            except Exception as e:
+                logger.error(f"Failed to load user favorite '{t_info['title']}' into queue: {e}")
+                
+        if count > 0 and not player.playing:
+            next_req = await self.music_manager.get_next_track(state)
+            if next_req:
+                player.autoplay = wavelink.AutoPlayMode.partial
+                await player.play(next_req.track)
+                
+        await EmbedManager.update_status_message(self, guild_id)
+        return count
+
 
 bot = MusicBot()
 
@@ -2196,6 +2306,20 @@ async def audio_filter(ctx: commands.Context, preset: str):
         logger.error(f"Failed to apply audio filter '{preset}': {e}", exc_info=True)
         await ctx.send(f"{Icons.ERROR} Something went wrong while applying the audio filter.")
 
+@bot.hybrid_command(name="favadd", description="Scrape your voice channel and load all active members' favorited songs shuffled.")
+@is_authorized(level=1000)
+async def favadd(ctx: commands.Context):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        return await ctx.send("You need to enter a voice channel first.", ephemeral=True)
+        
+    await ctx.defer(ephemeral=True)
+    count = await bot.fill_queue_from_vc_favorites(ctx.guild.id, ctx.author.voice.channel.id, ctx.author)
+    
+    if count > 0:
+        await ctx.send(f"{Icons.SUCCESS} Successfully added {count} favorited songs from active members to the queue!", ephemeral=True)
+    else:
+        await ctx.send(f"{Icons.EMPTY} No favorited songs found for the active users in this voice channel.", ephemeral=True)
+
 
 # ====================================
 # WAVELINK TRACK SYSTEM EVENTS
@@ -2205,7 +2329,7 @@ async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
     guild_id = payload.player.guild.id
     p_data = bot.persistence.load_persistence(guild_id)
     p_data["last_track"] = f"{payload.track.title} by {payload.track.author}"
-    bot.persistence.save_persistence(guild_id, p_data)
+    bot.persistence.save_presence(guild_id, p_data)
     await EmbedManager.update_status_message(bot, guild_id)
     EmbedManager.start_updater(bot, guild_id)
     await update_rich_presence(bot)

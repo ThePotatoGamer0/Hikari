@@ -11,23 +11,42 @@ export default function TrackRow({
   index 
 }) {
   const [flashState, setFlashState] = useState(null); 
-  const [dynamicArt, setDynamicArt] = useState(track.artworkUrl || track.artwork || null);
+
+  // Intercept raw Lavalink artwork URLs and force them through the Discord proxy mappings
+  const formatProxyUrl = (url) => {
+    if (!url) return null;
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname.includes('ytimg.com') || parsed.hostname.includes('youtube.com')) {
+        // Swap hqdefault to mqdefault to automatically strip letterboxing
+        return `/yt-img${parsed.pathname.replace('hqdefault.jpg', 'mqdefault.jpg')}`;
+      }
+      if (parsed.hostname.includes('sndcdn.com')) {
+        return `/sc-img${parsed.pathname}`;
+      }
+      return url;
+    } catch (e) {
+      return url;
+    }
+  };
+
+  const [dynamicArt, setDynamicArt] = useState(formatProxyUrl(track.artworkUrl || track.artwork));
 
   const isYouTube = track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be');
   const isSoundCloud = track.uri?.includes('soundcloud.com');
 
   // Dynamically resolve missing artwork
   useEffect(() => {
-    if (track.artworkUrl || track.artwork) {
-      setDynamicArt(track.artworkUrl || track.artwork);
+    const existingArt = formatProxyUrl(track.artworkUrl || track.artwork);
+    if (existingArt) {
+      setDynamicArt(existingArt);
       return;
     }
 
     let isMounted = true;
     if (isYouTube) {
       const ytVideoId = track.uri?.split('v=')[1]?.split('&')[0] || track.uri?.split('/').pop();
-      if (ytVideoId) {
-        // mqdefault is 16:9 native, completely eliminating black bars when object-fit crops it
+      if (ytVideoId && isMounted) {
         setDynamicArt(`/yt-img/vi/${ytVideoId}/mqdefault.jpg`);
       }
     } else if (isSoundCloud) {

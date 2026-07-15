@@ -233,7 +233,26 @@ export default function App() {
 
   const getFallbackArtUrl = (track) => {
     if (!track) return null;
-    if (track.artworkUrl || track.artwork) return track.artworkUrl || track.artwork;
+    
+    // Ensure any raw external art logic gets parsed safely
+    const formatProxyUrl = (url) => {
+      if (!url) return null;
+      try {
+        const parsed = new URL(url);
+        if (parsed.hostname.includes('ytimg.com') || parsed.hostname.includes('youtube.com')) {
+          return `/yt-img${parsed.pathname.replace('hqdefault.jpg', 'mqdefault.jpg')}`;
+        }
+        if (parsed.hostname.includes('sndcdn.com')) {
+          return `/sc-img${parsed.pathname}`;
+        }
+        return url;
+      } catch (e) {
+        return url;
+      }
+    };
+
+    if (track.artworkUrl || track.artwork) return formatProxyUrl(track.artworkUrl || track.artwork);
+    
     if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
       const ytVideoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
       return `/yt-img/vi/${ytVideoId}/mqdefault.jpg`; 

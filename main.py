@@ -1092,14 +1092,14 @@ class MusicBot(commands.Bot):
         app.router.add_route('*', '/api/token', self.api_token)
         
         # Control Endpoints (Mapped explicitly to bot commands)
-        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc', 'seek', 'toggleplayback', 'favadd']:
+        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc', 'seek', 'toggleplayback', 'favadd', 'search', 'favorites']:
             app.router.add_route('*', f'/api/{cmd}', getattr(self, f'api_{cmd}'))
         
         # Handle CORS preflight for all endpoints
         async def cors_handler(request): 
             return web.Response(headers={
                 "Access-Control-Allow-Origin": "*", 
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS", 
+                "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS", 
                 "Access-Control-Allow-Headers": "Content-Type"
             })
         app.router.add_options('/{tail:.*}', cors_handler)
@@ -1236,6 +1236,127 @@ class MusicBot(commands.Bot):
             
         lyric_text, source = result
         return web.json_response({"query": query, "source": source, "lyrics": lyric_text}, headers=headers)
+
+    async def api_search(self, request: web.Request):
+        """Proxies search requests securely to the internal Lavalink container."""
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        query = data.get('q') or data.get('query')
+        
+        if not query:
+            return web.json_response({"error": "Missing query parameter 'q'"}, status=400, headers=headers)
+            
+        host = os.getenv('LAVALINK_HOST', '127.0.0.1')
+        password = 'youshallnotpass'
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"http://{host}:2333/v4/loadtracks",
+                    params={"identifier": query},
+                    headers={"Authorization": password}
+                ) as resp:
+                    if resp.status == 200:
+                        lavalink_data = await resp.json()
+                        return web.json_response(lavalink_data, headers=headers)
+                    else:
+                        return web.json_response({"error": "Lavalink search failed"}, status=resp.status, headers=headers)
+        except Exception as e:
+            logger.error(f"Lavalink proxy search error: {e}")
+            return web.json_response({"error": str(e)}, status=500, headers=headers)
+
+    async def api_favorites(self, request: web.Request):
+        """Handles GET, POST, and DELETE for user favorites mapped via MariaDB."""
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        discord_id = data.get('discord_id')
+        
+        if not discord_id:
+            return web.json_response({"error": "Missing discord_id"}, status=400, headers=headers)
+            
+        if not self.db_pool:
+            return web.json_response({"error": "Database connection pool not configured"}, status=500, headers=headers)
+
+        if request.method == 'GET':
+            try:
+                async with self.db_pool.acquire() as conn:
+                    async with conn.cursor(aiomysql.DictCursor) as cur:
+                        await cur.execute('''
+                            SELECT t.* FROM tracks t
+                            JOIN user_favorites uf ON t.track_id = uf.track_id
+                            WHERE uf.discord_id = %s
+                            ORDER BY uf.added_at DESC
+                        ''', (discord_id,))
+                        rows = await cur.fetchall()
+                return web.json_response({"favorites": rows}, headers=headers)
+            except Exception as e:
+                logger.error(f"Error fetching favorites: {e}")
+                return web.json_response({"error": str(e)}, status=500, headers=headers)
+
+        elif request.method == 'POST':
+            lavalink_identifier = data.get('lavalink_identifier')
+            title = data.get('title', 'Unknown Title')
+            author = data.get('author', 'Unknown Author')
+            duration_ms = data.get('duration_ms', 0)
+            
+            if not lavalink_identifier:
+                return web.json_response({"error": "Missing lavalink_identifier"}, status=400, headers=headers)
+                
+            try:
+                async with self.db_pool.acquire() as conn:
+                    async with conn.cursor() as cur:
+                        # Insert track if it doesn't exist
+                        await cur.execute('''
+                            INSERT INTO tracks (lavalink_identifier, title, author, duration_ms)
+                            VALUES (%s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE title=VALUES(title)
+                        ''', (lavalink_identifier, title, author, duration_ms))
+                        
+                        # Grab the generated or existing track_id
+                        await cur.execute('SELECT track_id FROM tracks WHERE lavalink_identifier = %s', (lavalink_identifier,))
+                        track_res = await cur.fetchone()
+                        if not track_res:
+                            return web.json_response({"error": "Failed to resolve track ID"}, status=500, headers=headers)
+                            
+                        track_id = track_res[0]
+                        
+                        # Link favorite to user
+                        await cur.execute('''
+                            INSERT IGNORE INTO user_favorites (discord_id, track_id)
+                            VALUES (%s, %s)
+                        ''', (discord_id, track_id))
+                        
+                return web.json_response({"success": True, "action": "added"}, headers=headers)
+            except Exception as e:
+                logger.error(f"Error adding favorite: {e}")
+                return web.json_response({"error": str(e)}, status=500, headers=headers)
+
+        elif request.method == 'DELETE':
+            lavalink_identifier = data.get('lavalink_identifier')
+            track_id = data.get('track_id')
+            
+            if not lavalink_identifier and not track_id:
+                return web.json_response({"error": "Missing track identifier"}, status=400, headers=headers)
+                
+            try:
+                async with self.db_pool.acquire() as conn:
+                    async with conn.cursor() as cur:
+                        if track_id:
+                            await cur.execute('DELETE FROM user_favorites WHERE discord_id = %s AND track_id = %s', (discord_id, track_id))
+                        else:
+                            await cur.execute('''
+                                DELETE uf FROM user_favorites uf
+                                JOIN tracks t ON uf.track_id = t.track_id
+                                WHERE uf.discord_id = %s AND t.lavalink_identifier = %s
+                            ''', (discord_id, lavalink_identifier))
+                            
+                return web.json_response({"success": True, "action": "deleted"}, headers=headers)
+            except Exception as e:
+                logger.error(f"Error deleting favorite: {e}")
+                return web.json_response({"error": str(e)}, status=500, headers=headers)
+                
+        else:
+            return web.json_response({"error": "Method not allowed"}, status=405, headers=headers)
 
     async def api_play(self, request: web.Request):
         headers = {"Access-Control-Allow-Origin": "*"}
@@ -2329,7 +2450,7 @@ async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
     guild_id = payload.player.guild.id
     p_data = bot.persistence.load_persistence(guild_id)
     p_data["last_track"] = f"{payload.track.title} by {payload.track.author}"
-    bot.persistence.save_presence(guild_id, p_data)
+    bot.persistence.save_persistence(guild_id, p_data)
     await EmbedManager.update_status_message(bot, guild_id)
     EmbedManager.start_updater(bot, guild_id)
     await update_rich_presence(bot)

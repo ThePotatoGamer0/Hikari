@@ -128,7 +128,8 @@ export default function RightPanel({
   const executeSearch = async (formattedQuery) => {
     setSearchStatus("Searching audio network...");
     try {
-      const res = await fetch(`/api/search?q=ytsearch:${encodeURIComponent(formattedQuery)}`);
+      // The query is passed completely raw to the hybrid backend
+      const res = await fetch(`/api/search?q=${encodeURIComponent(formattedQuery)}`);
       if (res.ok) {
         const data = await res.json();
         setSearchResults(data.data || data.tracks || []);

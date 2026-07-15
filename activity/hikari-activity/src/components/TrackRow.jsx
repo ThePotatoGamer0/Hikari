@@ -18,11 +18,16 @@ export default function TrackRow({
     try {
       const parsed = new URL(url);
       if (parsed.hostname.includes('ytimg.com') || parsed.hostname.includes('youtube.com')) {
-        // Swap hqdefault to mqdefault to automatically strip letterboxing
         return `/yt-img${parsed.pathname.replace('hqdefault.jpg', 'mqdefault.jpg')}`;
       }
       if (parsed.hostname.includes('sndcdn.com')) {
         return `/sc-img${parsed.pathname}`;
+      }
+      if (parsed.hostname.includes('googleusercontent.com')) {
+        return `/yt3-img${parsed.pathname}`;
+      }
+      if (parsed.hostname.includes('ggpht.com')) {
+        return `/ggpht-img${parsed.pathname}`;
       }
       return url;
     } catch (e) {

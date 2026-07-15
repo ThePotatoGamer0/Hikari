@@ -1183,7 +1183,6 @@ class MusicBot(commands.Bot):
                 "title": req.track.title,
                 "author": req.track.author,
                 "uri": req.track.uri,
-                # NEW: Passing length directly to the frontend for the info modal
                 "length": req.track.length,
                 "requester": str(req.requester),
                 "uid": req.uid
@@ -1249,18 +1248,57 @@ class MusicBot(commands.Bot):
         host = os.getenv('LAVALINK_HOST', '127.0.0.1')
         password = 'youshallnotpass'
         
+        async def fetch_lavalink(identifier):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"http://{host}:2333/v4/loadtracks",
+                        params={"identifier": identifier},
+                        headers={"Authorization": password}
+                    ) as resp:
+                        if resp.status == 200:
+                            return await resp.json()
+            except Exception as e:
+                logger.error(f"Lavalink fetch error for {identifier}: {e}")
+            return None
+
+        def extract_tracks(payload):
+            if not payload: return []
+            data = payload.get('data')
+            if isinstance(data, list): return data
+            if isinstance(data, dict) and 'tracks' in data: return data['tracks']
+            if isinstance(data, dict) and 'info' in data: return [data] # Single track fallback
+            return []
+
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"http://{host}:2333/v4/loadtracks",
-                    params={"identifier": query},
-                    headers={"Authorization": password}
-                ) as resp:
-                    if resp.status == 200:
-                        lavalink_data = await resp.json()
-                        return web.json_response(lavalink_data, headers=headers)
-                    else:
-                        return web.json_response({"error": "Lavalink search failed"}, status=resp.status, headers=headers)
+            # If it's a URL, a direct lavalink prefix, or a recommendation request, pass it straight through
+            if query.startswith(('ytsearch:', 'scsearch:', 'ytrec:', 'http://', 'https://')):
+                res = await fetch_lavalink(query)
+                return web.json_response({"data": extract_tracks(res)}, headers=headers)
+            
+            # HYBRID SEARCH: Run YouTube and SoundCloud searches simultaneously
+            yt_res, sc_res = await asyncio.gather(
+                fetch_lavalink(f"ytsearch:{query}"),
+                fetch_lavalink(f"scsearch:{query}")
+            )
+            
+            yt_tracks = extract_tracks(yt_res)
+            sc_tracks = extract_tracks(sc_res)
+            
+            # Interleave the results (1 YT, 1 SC, 1 YT, 1 SC...)
+            combined = []
+            for yt, sc in zip(yt_tracks, sc_tracks):
+                combined.extend([yt, sc])
+            
+            # Append any remaining tracks if one platform returned more than the other
+            diff = len(yt_tracks) - len(sc_tracks)
+            if diff > 0:
+                combined.extend(yt_tracks[-diff:])
+            elif diff < 0:
+                combined.extend(sc_tracks[diff:])
+                
+            return web.json_response({"data": combined}, headers=headers)
+            
         except Exception as e:
             logger.error(f"Lavalink proxy search error: {e}")
             return web.json_response({"error": str(e)}, status=500, headers=headers)

@@ -20,7 +20,6 @@ export default function App() {
 
   const pollInterval = useRef(null);
 
-  // Reusable formatProxyUrl for InfoModal and App Background
   const formatProxyUrl = (url) => {
     if (!url) return null;
     try {
@@ -196,12 +195,16 @@ export default function App() {
       return;
     }
 
-    // Try to resolve high quality native artwork first (like YTM covers)
+    // Only bypass the smart check if the artwork is definitively from a premium source (YTM/SC)
     if (track.artworkUrl || track.artwork) {
-      setResolvedArtUrl(formatProxyUrl(track.artworkUrl || track.artwork));
-      return;
+      const art = track.artworkUrl || track.artwork;
+      if (art.includes('googleusercontent.com') || art.includes('ggpht.com') || art.includes('sndcdn.com')) {
+        setResolvedArtUrl(formatProxyUrl(art));
+        return;
+      }
     }
 
+    // For standard YouTube, run the smart 1080p maxresdefault fallback logic
     if (track.uri.includes('youtube.com') || track.uri.includes('youtu.be')) {
       const ytVideoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
       const maxRes = `/yt-img/vi/${ytVideoId}/maxresdefault.jpg`;
@@ -234,9 +237,9 @@ export default function App() {
       };
       fetchSoundcloudArt();
     } else {
-      setResolvedArtUrl(null);
+      setResolvedArtUrl(formatProxyUrl(track.artworkUrl || track.artwork) || null);
     }
-  }, [status?.current_track?.uri]);
+  }, [status?.current_track?.uri, status?.current_track?.artwork, status?.current_track?.artworkUrl]);
 
   const handleAction = async (endpoint, payload = {}) => {
     if (!guildId) return;
@@ -262,7 +265,31 @@ export default function App() {
 
   const getFallbackArtUrl = (track) => {
     if (!track) return null;
+    
+    const formatProxyUrl = (url) => {
+      if (!url) return null;
+      try {
+        const parsed = new URL(url);
+        if (parsed.hostname.includes('ytimg.com') || parsed.hostname.includes('youtube.com')) {
+          return `/yt-img${parsed.pathname.replace('hqdefault.jpg', 'mqdefault.jpg')}`;
+        }
+        if (parsed.hostname.includes('sndcdn.com')) {
+          return `/sc-img${parsed.pathname}`;
+        }
+        if (parsed.hostname.includes('googleusercontent.com')) {
+          return `/yt3-img${parsed.pathname}`;
+        }
+        if (parsed.hostname.includes('ggpht.com')) {
+          return `/ggpht-img${parsed.pathname}`;
+        }
+        return url;
+      } catch (e) {
+        return url;
+      }
+    };
+
     if (track.artworkUrl || track.artwork) return formatProxyUrl(track.artworkUrl || track.artwork);
+    
     if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
       const ytVideoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
       return `/yt-img/vi/${ytVideoId}/mqdefault.jpg`; 

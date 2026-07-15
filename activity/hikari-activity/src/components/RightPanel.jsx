@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import Icons from './Icons';
 import ContextMenu from './ContextMenu';
 import TrackRow from './TrackRow';
+import AboutModal from './AboutModal';
 
 const ContextIcons = {
   Copy: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>,
@@ -21,12 +22,17 @@ export default function RightPanel({
   const [queueSearch, setQueueSearch] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
   
+  // Modals
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
+  
+  // Lyrics Engine State
   const [lyricsData, setLyricsData] = useState([]);
   const [lyricsStatus, setLyricsStatus] = useState("Loading...");
   const [localPos, setLocalPos] = useState(0);
   const [lyricOffset, setLyricOffset] = useState(0);
   const [isAutoScroll, setIsAutoScroll] = useState(true);
 
+  // Search Engine State
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searchStatus, setSearchStatus] = useState('');
@@ -167,11 +173,19 @@ export default function RightPanel({
 
   return (
     <div className="right-panel">
-      <div className="tabs-header" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', display: 'grid' }}>
+      {/* UPDATE: The gridTemplateColumns now uses `auto` at the end to hug the new Info Button */}
+      <div className="tabs-header" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr auto', display: 'grid', alignItems: 'center' }}>
         <button className={`tab-btn ${activeTab === 'queue' ? 'active' : ''}`} onClick={() => setActiveTab('queue')}>Up Next</button>
         <button className={`tab-btn ${activeTab === 'lyrics' ? 'active' : ''}`} onClick={() => setActiveTab('lyrics')}>Lyrics</button>
         <button className={`tab-btn ${activeTab === 'search' ? 'active' : ''}`} onClick={() => setActiveTab('search')}>Search</button>
         <button className={`tab-btn ${activeTab === 'favorites' ? 'active' : ''}`} onClick={() => setActiveTab('favorites')}>Library</button>
+        <button 
+          onClick={() => setIsAboutOpen(true)}
+          style={{ background: 'none', border: 'none', color: '#b5bac1', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 0.5rem' }}
+          title="About Hikari"
+        >
+          {Icons.Info}
+        </button>
       </div>
 
       <div 
@@ -322,6 +336,8 @@ export default function RightPanel({
       {activeTab === 'lyrics' && !isAutoScroll && lyricsData.length > 0 && (
         <button className="resume-sync-btn" onClick={() => setIsAutoScroll(true)}>Resume Sync</button>
       )}
+
+      <AboutModal isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
 
       {contextMenu && (
         <ContextMenu 

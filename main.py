@@ -1273,6 +1273,15 @@ class MusicBot(commands.Bot):
         if not query:
             return web.json_response({"error": "Missing query parameter 'q'"}, status=400, headers=headers)
             
+        # 1. MATCH /PLAY LOGIC: Resolve Spotify URLs into clean text queries first
+        if self.music_manager.spotify.is_spotify_url(query):
+            if not self.music_manager.spotify.enabled:
+                return web.json_response({"error": "Spotify support not enabled"}, status=400, headers=headers)
+            try:
+                query = await self.music_manager.spotify.resolve(query)
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=400, headers=headers)
+
         host = os.getenv('LAVALINK_HOST', '127.0.0.1')
         password = 'youshallnotpass'
         
@@ -1300,13 +1309,13 @@ class MusicBot(commands.Bot):
 
         try:
             # If it's a URL, a direct lavalink prefix, or a recommendation request, pass it straight through
-            if query.startswith(('ytsearch:', 'scsearch:', 'ytrec:', 'http://', 'https://')):
+            if query.startswith(('ytsearch:', 'ytmsearch:', 'scsearch:', 'ytrec:', 'http://', 'https://')):
                 res = await fetch_lavalink(query)
                 return web.json_response({"data": extract_tracks(res)}, headers=headers)
             
-            # HYBRID SEARCH: Run YouTube and SoundCloud searches simultaneously
+            # 2. MATCH /PLAY LOGIC: Use YouTube Music (ytmsearch) for high-quality, audio-only tracks
             yt_res, sc_res = await asyncio.gather(
-                fetch_lavalink(f"ytsearch:{query}"),
+                fetch_lavalink(f"ytmsearch:{query}"),
                 fetch_lavalink(f"scsearch:{query}")
             )
             

@@ -1062,8 +1062,34 @@ class MusicBot(commands.Bot):
                 autocommit=True
             )
             logger.info("MariaDB Connection Pool initialized successfully.")
+            
+            # ---> NEW: Initialize database tables <---
+            async with self.db_pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute('''
+                        CREATE TABLE IF NOT EXISTS tracks (
+                            track_id INT AUTO_INCREMENT PRIMARY KEY,
+                            lavalink_identifier VARCHAR(255) UNIQUE NOT NULL,
+                            title VARCHAR(255) NOT NULL,
+                            author VARCHAR(255) NOT NULL,
+                            duration_ms INT NOT NULL DEFAULT 0
+                        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+                    ''')
+                    await cur.execute('''
+                        CREATE TABLE IF NOT EXISTS user_favorites (
+                            favorite_id INT AUTO_INCREMENT PRIMARY KEY,
+                            discord_id VARCHAR(64) NOT NULL,
+                            track_id INT NOT NULL,
+                            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE KEY unique_user_track (discord_id, track_id),
+                            FOREIGN KEY (track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+                        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+                    ''')
+            logger.info("Database tables verified/created successfully.")
+            # ----------------------------------------
+            
         except Exception as e:
-            logger.error(f"Failed to initialize MariaDB Connection Pool: {e}")
+            logger.error(f"Failed to initialize MariaDB Connection Pool or Tables: {e}")
             self.db_pool = None
 
         # Start the REST API cleanly as a parasitic background task

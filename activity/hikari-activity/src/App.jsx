@@ -299,28 +299,28 @@ export default function App() {
     return <div className="loading">Connecting to Voice Channel...</div>;
   }
 
-  // Smooth, GPU-accelerated CSS flow with a film-grain anti-banding overlay
+  // Extreme zoom + SVG liquid distortion + massive post-processing blur
   const ambientStyles = `
     @keyframes ambientFlow {
-      0% { transform: scale(1.2) translate(0%, 0%) rotate(0deg); }
-      33% { transform: scale(1.3) translate(2%, 3%) rotate(1deg); }
-      66% { transform: scale(1.25) translate(-2%, -1%) rotate(-1deg); }
-      100% { transform: scale(1.2) translate(0%, 0%) rotate(0deg); }
+      0% { transform: scale(2.5) translate(0%, 0%) rotate(0deg); }
+      33% { transform: scale(2.8) translate(4%, 6%) rotate(8deg); }
+      66% { transform: scale(2.4) translate(-4%, -3%) rotate(-8deg); }
+      100% { transform: scale(2.5) translate(0%, 0%) rotate(0deg); }
     }
     .ambient-flow {
-      animation: ambientFlow 25s ease-in-out infinite alternate;
+      animation: ambientFlow 35s ease-in-out infinite alternate;
       will-change: transform;
-      /* Increased saturation makes the colors pop underneath the UI */
-      filter: blur(80px) saturate(150%);
+      /* Apply SVG swirl, extreme blur to obliterate shapes, and saturation to make colors pop */
+      filter: url(#liquid-swirl) blur(120px) saturate(180%);
     }
     .grain-overlay {
       position: fixed;
       inset: 0;
       z-index: -1;
       pointer-events: none;
-      /* Base64 encoded repeating SVG noise to act as a dithering layer */
+      /* Base64 encoded repeating SVG noise to dither the extreme gradients and prevent color banding */
       background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-      opacity: 0.08;
+      opacity: 0.12;
       mix-blend-mode: screen;
     }
   `;
@@ -328,6 +328,16 @@ export default function App() {
   return (
     <div className="app-container">
       <style>{ambientStyles}</style>
+
+      {/* Hidden SVG Filter Definition for the Liquid Swirl */}
+      <svg style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}>
+        <filter id="liquid-swirl" x="-50%" y="-50%" width="200%" height="200%">
+          {/* Low frequency creates large, smooth, lava-lamp-like noise blobs */}
+          <feTurbulence type="fractalNoise" baseFrequency="0.005" numOctaves="2" result="noise" />
+          {/* Massive scale rips the pixels apart following the noise map */}
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="400" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+      </svg>
 
       {resolvedArtUrl && (
         <>

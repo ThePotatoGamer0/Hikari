@@ -13,10 +13,18 @@ import {
   Pause,
   MoreHorizontal,
   Info,
-  Heart
+  Heart,
+  Waves // Using Waves as a sleek stand-in for Wavelink/Lavalink
 } from 'lucide-react';
 
-import { siYoutube, siSoundcloud } from 'simple-icons';
+import { 
+  siYoutube, 
+  siSoundcloud, 
+  siReact, 
+  siVite, 
+  siPython, 
+  siMariadb 
+} from 'simple-icons';
 
 // Helper component to render simple-icons as native React SVGs
 const SimpleIcon = ({ icon, size = 14, color }) => (
@@ -57,5 +65,12 @@ export default {
   
   // Brand Badges from simple-icons
   YouTube: <SimpleIcon icon={siYoutube} color="#ff0000" />,
-  SoundCloud: <SimpleIcon icon={siSoundcloud} color="#ff5500" />
+  SoundCloud: <SimpleIcon icon={siSoundcloud} color="#ff5500" />,
+
+  // Tech Stack Logos
+  ReactLogo: <SimpleIcon icon={siReact} color="#61DAFB" size={26} />,
+  ViteLogo: <SimpleIcon icon={siVite} color="#646CFF" size={26} />,
+  PythonLogo: <SimpleIcon icon={siPython} color="#3776AB" size={26} />,
+  MariaDBLogo: <SimpleIcon icon={siMariadb} color="#FFFFFF" size={26} />, // White outline for dark mode visibility
+  LavalinkLogo: <Waves size={26} color="#7289da" /> // Lucide stand-in matching the "Wave" in Wavelink
 };

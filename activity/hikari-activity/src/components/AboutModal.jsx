@@ -45,12 +45,23 @@ export default function AboutModal({ isOpen, onClose }) {
           
           <div style={{ marginTop: '0.5rem' }}>
             <strong>Tech Stack:</strong>
-            <ul style={{ margin: '0.4rem 0 0 0', paddingLeft: '1.2rem', color: '#b5bac1', lineHeight: '1.6' }}>
-              <li>React, Vite & Discord Embedded App SDK</li>
-              <li>Python (discord.py, aiohttp)</li>
-              <li>Wavelink & Lavalink Network</li>
-              <li>MariaDB (aiomysql)</li>
-            </ul>
+            <div style={{ display: 'flex', gap: '1.2rem', marginTop: '0.8rem', alignItems: 'center' }}>
+              <div title="React" style={{ cursor: 'help', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s' }} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
+                {Icons.ReactLogo}
+              </div>
+              <div title="Vite" style={{ cursor: 'help', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s' }} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
+                {Icons.ViteLogo}
+              </div>
+              <div title="Python" style={{ cursor: 'help', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s' }} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
+                {Icons.PythonLogo}
+              </div>
+              <div title="Wavelink / Lavalink" style={{ cursor: 'help', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s' }} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
+                {Icons.LavalinkLogo}
+              </div>
+              <div title="MariaDB" style={{ cursor: 'help', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s' }} onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'} onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
+                {Icons.MariaDBLogo}
+              </div>
+            </div>
           </div>
 
           <div style={{ marginTop: '0.5rem' }}>

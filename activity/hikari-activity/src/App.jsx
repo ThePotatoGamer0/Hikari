@@ -1,4 +1,3 @@
-// activity/hikari-activity/src/App.jsx
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { DiscordSDK } from '@discord/embedded-app-sdk';
 import LeftPanel from './components/LeftPanel';

@@ -13,10 +13,25 @@ import {
   Pause,
   MoreHorizontal,
   Info,
-  Heart,
-  Youtube,
-  Cloud
+  Heart
 } from 'lucide-react';
+
+import { siYoutube, siSoundcloud } from 'simple-icons';
+
+// Helper component to render simple-icons as native React SVGs
+const SimpleIcon = ({ icon, size = 14, color }) => (
+  <svg 
+    role="img" 
+    viewBox="0 0 24 24" 
+    width={size} 
+    height={size} 
+    fill={color || `#${icon.hex}`} 
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <title>{icon.title}</title>
+    <path d={icon.path} />
+  </svg>
+);
 
 export default {
   MusicNote: <Music size={24} />,
@@ -39,6 +54,8 @@ export default {
 
   Heart: <Heart size={20} />,
   HeartFilled: <Heart size={20} fill="currentColor" />,
-  YouTube: <Youtube size={14} color="#ff0000" />,
-  SoundCloud: <Cloud size={14} color="#ff5500" />
+  
+  // Brand Badges from simple-icons
+  YouTube: <SimpleIcon icon={siYoutube} color="#ff0000" />,
+  SoundCloud: <SimpleIcon icon={siSoundcloud} color="#ff5500" />
 };

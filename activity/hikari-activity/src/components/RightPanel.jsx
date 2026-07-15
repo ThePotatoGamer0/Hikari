@@ -1,4 +1,3 @@
-// activity/hikari-activity/src/components/RightPanel.jsx
 import { useState, useEffect, useRef } from 'react';
 import Icons from './Icons';
 import ContextMenu from './ContextMenu';
@@ -129,7 +128,6 @@ export default function RightPanel({
   const executeSearch = async (formattedQuery) => {
     setSearchStatus("Searching audio network...");
     try {
-      // Platform-agnostic layout lookup helper
       const res = await fetch(`/api/search?q=ytsearch:${encodeURIComponent(formattedQuery)}`);
       if (res.ok) {
         const data = await res.json();
@@ -280,7 +278,7 @@ export default function RightPanel({
                 onClick={() => onAction('favadd')}
                 style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', background: '#23a55a', color: '#fff', fontWeight: 'bold', border: 'none', cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
               >
-                <i className="fa-solid fa-shuffle"></i> Deploy Favorites Pool
+                {Icons.Shuffle} Deploy Favorites Pool
               </button>
             </div>
             <div className="queue-list">

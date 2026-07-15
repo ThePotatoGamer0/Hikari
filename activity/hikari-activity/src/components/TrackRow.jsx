@@ -1,4 +1,3 @@
-// activity/hikari-activity/src/components/TrackRow.jsx
 import { useState } from 'react';
 import Icons from './Icons';
 
@@ -10,12 +9,11 @@ export default function TrackRow({
   onFavoriteToggle, 
   openInfoModal 
 }) {
-  const [flashState, setFlashState] = useState(null); // 'success' | 'error' | null
+  const [flashState, setFlashState] = useState(null); 
 
   const isYouTube = track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be');
   const isSoundCloud = track.uri?.includes('soundcloud.com');
 
-  // Universal Metadata Sanitizer
   const sanitizeMetadata = (rawTitle, rawAuthor) => {
     let author = rawAuthor || "Unknown";
     let title = rawTitle || "Unknown";
@@ -70,8 +68,7 @@ export default function TrackRow({
       onClick={() => openInfoModal && openInfoModal(track)}
       style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', marginBottom: '0.5rem' }}
     >
-      {/* Track Art / Icon */}
-      <div style={{ width: '40px', height: '40px', borderRadius: '4px', overflow: 'hidden', background: '#1E1F22', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContext: 'center' }}>
+      <div style={{ width: '40px', height: '40px', borderRadius: '4px', overflow: 'hidden', background: '#1E1F22', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {getFallbackArtUrl() ? (
           <img src={getFallbackArtUrl()} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
@@ -79,23 +76,20 @@ export default function TrackRow({
         )}
       </div>
 
-      {/* Meta details */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <span style={{ fontSize: '0.9rem', fontWeight: '500', color: '#f2f3f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {cleanTitle}
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          {isYouTube && <i class="fa-brands fa-youtube" style={{ color: '#ff0000', fontSize: '0.75rem' }}></i>}
-          {isSoundCloud && <i class="fa-brands fa-soundcloud" style={{ color: '#ff5500', fontSize: '0.75rem' }}></i>}
+          {isYouTube && Icons.YouTube}
+          {isSoundCloud && Icons.SoundCloud}
           <span style={{ fontSize: '0.75rem', color: '#b5bac1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {cleanAuthor}
           </span>
         </div>
       </div>
 
-      {/* Action Buttons Container */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
-        {/* Button 1: Dynamic Heart with Multi-Fold Feedback */}
         <button 
           onClick={handleFavClick}
           className={`fav-toggle-btn ${flashState ? `flash-${flashState}` : ''}`}
@@ -107,13 +101,15 @@ export default function TrackRow({
             borderRadius: '4px',
             color: flashState === 'success' ? '#23a55a' : flashState === 'error' ? '#f23f43' : isFavorited ? '#f23f43' : '#b5bac1',
             transition: 'color 0.2s, transform 0.1s',
-            transform: flashState ? 'scale(1.2)' : 'none'
+            transform: flashState ? 'scale(1.2)' : 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
           }}
         >
-          <i className={`${isFavorited || flashState === 'success' ? 'fa-solid' : 'fa-regular'} fa-heart`}></i>
+          {isFavorited || flashState === 'success' ? Icons.HeartFilled : Icons.Heart}
         </button>
 
-        {/* Button 2: Context-Aware Queue Action */}
         {context === 'search' && (
           <button 
             className="remove-btn"
@@ -148,7 +144,7 @@ export default function TrackRow({
               onAction('play', { query: track.uri });
             }}
           >
-            <i className="fa-solid fa-play" style={{ fontSize: '0.75rem' }}></i>
+            {Icons.Play}
           </button>
         )}
       </div>

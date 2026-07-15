@@ -12,7 +12,10 @@ import {
   Play,
   Pause,
   MoreHorizontal,
-  Info
+  Info,
+  Heart,
+  Youtube,
+  Cloud
 } from 'lucide-react';
 
 export default {
@@ -32,5 +35,10 @@ export default {
   Trash: <Trash2 size={20} />,
   Close: <X size={24} />,
   More: <MoreHorizontal size={24} />,
-  Info: <Info size={24} />
+  Info: <Info size={24} />,
+
+  Heart: <Heart size={20} />,
+  HeartFilled: <Heart size={20} fill="currentColor" />,
+  YouTube: <Youtube size={14} color="#ff0000" />,
+  SoundCloud: <Cloud size={14} color="#ff5500" />
 };

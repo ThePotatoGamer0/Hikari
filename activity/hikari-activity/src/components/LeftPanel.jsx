@@ -1,4 +1,3 @@
-// activity/hikari-activity/src/components/LeftPanel.jsx
 import { useState, useEffect } from 'react';
 import Icons from './Icons';
 
@@ -119,17 +118,18 @@ export default function LeftPanel({
             <h1 className="title">{cleanTitle}</h1>
             <h2 className="author">{cleanAuthor}</h2>
           </div>
-          {/* Main Dashboard Heart Overlay */}
           <button 
             onClick={handleFavClick}
             style={{
-              position: 'absolute', right: '0', top: '50%', transform: flashState ? 'translateY(-50%) scale(1.2)' : 'translateY(-50%)',
-              background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.4rem',
+              position: 'absolute', right: '0', top: '50%', 
+              transform: flashState ? 'translateY(-50%) scale(1.2)' : 'translateY(-50%)',
+              background: 'none', border: 'none', cursor: 'pointer',
               color: flashState === 'success' ? '#23a55a' : flashState === 'error' ? '#f23f43' : isFavorited ? '#f23f43' : '#b5bac1',
-              transition: 'color 0.2s, transform 0.1s'
+              transition: 'color 0.2s, transform 0.1s',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}
           >
-            <i className={`${isFavorited || flashState === 'success' ? 'fa-solid' : 'fa-regular'} fa-heart`}></i>
+            {isFavorited || flashState === 'success' ? Icons.HeartFilled : Icons.Heart}
           </button>
         </div>
       )}

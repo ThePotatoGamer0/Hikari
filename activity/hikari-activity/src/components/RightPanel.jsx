@@ -128,7 +128,6 @@ export default function RightPanel({
   const executeSearch = async (formattedQuery) => {
     setSearchStatus("Searching audio network...");
     try {
-      // The query is passed completely raw to the hybrid backend
       const res = await fetch(`/api/search?q=${encodeURIComponent(formattedQuery)}`);
       if (res.ok) {
         const data = await res.json();
@@ -205,8 +204,9 @@ export default function RightPanel({
                     key={queueTrack.uid}
                     track={queueTrack}
                     context="queue"
+                    index={queueTrack.originalIndex} 
                     onAction={onAction}
-                    isFavorited={userFavorites.some(f => f.lavalink_identifier === (queueTrack.lavalink_identifier || queueTrack.identifier || queueTrack.uri))}
+                    isFavorited={userFavorites.some(f => f.lavalink_identifier === (queueTrack.identifier || queueTrack.uri))}
                     onFavoriteToggle={onFavoriteToggle}
                     openInfoModal={openInfoModal}
                   />
@@ -243,11 +243,29 @@ export default function RightPanel({
         {/* TAB 3: CONSOLIDATED EXCLUSIVE SEARCH */}
         {activeTab === 'search' && (
           <div className="queue-tab-wrapper">
-            <div className="queue-search-wrapper">
+            <div className="queue-search-wrapper" style={{ display: 'flex', gap: '0.5rem' }}>
               <input 
-                type="text" className="queue-search-input" placeholder="Search title or query..."
+                type="text" className="queue-search-input" placeholder="Search title or paste URL/Playlist..."
                 value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ flex: 1 }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && searchQuery.includes('http')) {
+                    onAction('play', { query: searchQuery });
+                    setSearchQuery('');
+                  }
+                }}
               />
+              {searchQuery.includes('http') && (
+                <button 
+                  onClick={() => {
+                    onAction('play', { query: searchQuery });
+                    setSearchQuery('');
+                  }}
+                  style={{ background: '#23a55a', color: '#fff', border: 'none', borderRadius: '4px', padding: '0 1rem', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                >
+                  {Icons.Play} Play URL
+                </button>
+              )}
             </div>
             <div className="queue-list" style={{ marginTop: '0.5rem' }}>
               {searchStatus && <div className="empty-state" style={{ fontSize: '0.85rem', color: '#b5bac1', padding: '1rem' }}>{searchStatus}</div>}

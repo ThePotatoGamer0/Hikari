@@ -1209,7 +1209,8 @@ class MusicBot(commands.Bot):
                 "title": req.track.title,
                 "author": req.track.author,
                 "uri": req.track.uri,
-                "length": req.track.length,
+                "identifier": getattr(req.track, 'identifier', ""), # ADDED: Enables perfect favorite mapping
+                "length": getattr(req.track, 'length', 0),
                 "requester": str(req.requester),
                 "uid": req.uid
             })
@@ -1220,7 +1221,8 @@ class MusicBot(commands.Bot):
                 "title": player.current.title,
                 "author": player.current.author,
                 "uri": player.current.uri,
-                "length": player.current.length,
+                "identifier": getattr(player.current, 'identifier', ""), # ADDED
+                "length": getattr(player.current, 'length', 0),
                 "position": player.position,
                 "is_paused": player.paused
             }

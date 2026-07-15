@@ -7,7 +7,8 @@ export default function TrackRow({
   onAction, 
   isFavorited, 
   onFavoriteToggle, 
-  openInfoModal 
+  openInfoModal,
+  index 
 }) {
   const [flashState, setFlashState] = useState(null); 
 
@@ -68,6 +69,14 @@ export default function TrackRow({
       onClick={() => openInfoModal && openInfoModal(track)}
       style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', marginBottom: '0.5rem' }}
     >
+      {/* Queue Index Number */}
+      {index && (
+        <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#b5bac1', minWidth: '1.2rem', textAlign: 'right' }}>
+          {index}.
+        </span>
+      )}
+
+      {/* Track Art / Icon */}
       <div style={{ width: '40px', height: '40px', borderRadius: '4px', overflow: 'hidden', background: '#1E1F22', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {getFallbackArtUrl() ? (
           <img src={getFallbackArtUrl()} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />

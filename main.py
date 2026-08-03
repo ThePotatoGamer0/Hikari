@@ -2040,11 +2040,27 @@ bot = MusicBot()
 @bot.command(name='sync')
 @commands.is_owner()
 async def sync_commands(ctx: commands.Context):
-    """Hidden text command to manually sync slash commands to Discord."""
+    """Hidden text command to manually sync slash commands to Discord while preserving Entry Points."""
     try:
-        synced = await bot.tree.sync()
-        await ctx.send(f"{Icons.SUCCESS} Synced {len(synced)} commands to Discord.")
+        app_id = bot.application_id or (await bot.application_info()).id
+        
+        # 1. Fetch remote commands and rescue the Entry Point (Type 4)
+        remote_commands = await bot.http.get_global_commands(app_id)
+        entry_points = [cmd for cmd in remote_commands if cmd.get('type') == 4]
+        
+        # 2. Get local commands and convert to dict payload
+        local_commands = bot.tree.get_commands()
+        payload = [cmd.to_dict() for cmd in local_commands]
+        
+        # 3. Inject the entry point command(s) into the payload
+        payload.extend(entry_points)
+        
+        # 4. Push the combined payload to Discord
+        synced_data = await bot.http.bulk_upsert_global_commands(app_id, payload)
+        
+        await ctx.send(f"{Icons.SUCCESS} Synced {len(synced_data)} commands to Discord (preserved Activity Entry Point).")
     except Exception as e:
+        logger.error(f"Failed to sync commands: {e}", exc_info=True)
         await ctx.send(f"{Icons.ERROR} Failed to sync commands: {e}")
 
 @bot.hybrid_group(name="settings", invoke_without_command=True)

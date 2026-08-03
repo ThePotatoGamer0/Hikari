@@ -968,7 +968,7 @@ class LyricsPaginator(discord.ui.View):
 
     def generate_embed(self) -> discord.Embed:
         embed = discord.Embed(title=self.title, description=self.pages[self.current_page - 1], color=discord.Color.blurple())
-        embed.set_footer(text=f"Page {self.current_page}/{self.total_pages} 窶｢ Source: {self.source}")
+        embed.set_footer(text=f"Page {self.current_page}/{self.total_pages} \u2022 Source: {self.source}")
         return embed
 
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary, custom_id="lyrics_prev", emoji=Icons.PREV)
@@ -2050,7 +2050,7 @@ async def sync_commands(ctx: commands.Context):
         
         # 2. Get local commands and convert to dict payload
         local_commands = bot.tree.get_commands()
-        payload = [cmd.to_dict() for cmd in local_commands]
+        payload = [cmd.to_dict(bot.tree) for cmd in local_commands]
         
         # 3. Inject the entry point command(s) into the payload
         payload.extend(entry_points)

@@ -3,6 +3,7 @@ import Icons from './Icons';
 import ContextMenu from './ContextMenu';
 import TrackRow from './TrackRow';
 import AboutModal from './AboutModal';
+import ConfirmModal from './ConfirmModal';
 
 const ContextIcons = {
   Copy: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>,
@@ -24,6 +25,7 @@ export default function RightPanel({
   
   // Modals
   const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [isClearQueueOpen, setIsClearQueueOpen] = useState(false);
   
   // Lyrics Engine State
   const [lyricsData, setLyricsData] = useState([]);
@@ -163,6 +165,10 @@ export default function RightPanel({
     setContextMenu({ x: e.clientX, y: e.clientY, track: trackData });
   };
 
+  const handleClearQueue = () => {
+    onAction('clearqueue');
+  };
+
   const adjustedPos = localPos + (lyricOffset * 1000);
   const rawQueue = status?.queue || [];
   const queueWithIndexes = rawQueue.map((t, index) => ({ ...t, originalIndex: index + 1 }));
@@ -195,11 +201,19 @@ export default function RightPanel({
         {activeTab === 'queue' && (
           <div className="queue-tab-wrapper">
             {rawQueue.length > 0 && (
-              <div className="queue-search-wrapper">
+              <div className="queue-search-wrapper" style={{ display: 'flex', gap: '0.5rem' }}>
                 <input 
                   type="text" className="queue-search-input" placeholder="Filter queue..."
                   value={queueSearch} onChange={(e) => setQueueSearch(e.target.value)}
+                  style={{ flex: 1 }}
                 />
+                <button 
+                  onClick={() => setIsClearQueueOpen(true)}
+                  style={{ background: '#da373c', color: '#fff', border: 'none', borderRadius: '4px', padding: '0 1rem', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                  title="Clear Queue"
+                >
+                  Clear
+                </button>
               </div>
             )}
             <div className="queue-list">
@@ -338,6 +352,14 @@ export default function RightPanel({
       )}
 
       <AboutModal isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
+      
+      <ConfirmModal 
+        isOpen={isClearQueueOpen}
+        onClose={() => setIsClearQueueOpen(false)}
+        onConfirm={handleClearQueue}
+        title="Clear Queue"
+        message="Are you sure you want to remove all upcoming tracks from the queue? This cannot be undone."
+      />
 
       {contextMenu && (
         <ContextMenu 

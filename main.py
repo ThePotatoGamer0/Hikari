@@ -240,6 +240,26 @@ class QueueManager:
                 return found
             return None
 
+    async def move(self, from_index: int, to_index: int) -> bool:
+        """Moves a track from one position to another in the queue."""
+        async with self._lock:
+            if from_index < 0 or from_index >= len(self._queue):
+                return False
+            if to_index < 0 or to_index >= len(self._queue):
+                return False
+            if from_index == to_index:
+                return True
+                
+            # Temporarily convert to list to allow arbitrary insert
+            temp_list = list(self._queue)
+            item = temp_list.pop(from_index)
+            temp_list.insert(to_index, item)
+            self._queue = deque(temp_list)
+            
+            self._logger.info(f"Track moved from position {from_index} to {to_index}.")
+            self._save()
+            return True
+
     async def get_all(self) -> List[TrackRequest]:
         async with self._lock:
             return list(self._queue)
@@ -1116,7 +1136,7 @@ class MusicBot(commands.Bot):
         app.router.add_route('*', '/api/token', self.api_token)
         
         # Control Endpoints (Mapped explicitly to bot commands)
-        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc', 'seek', 'toggleplayback', 'favadd', 'search', 'favorites']:
+        for cmd in ['play', 'playnext', 'forceplay', 'skip', 'stop', 'clearqueue', 'remove', 'shuffle', 'autoplay', 'loop', 'filter', 'movevc', 'seek', 'toggleplayback', 'favadd', 'search', 'favorites', 'move']:
             app.router.add_route('*', f'/api/{cmd}', getattr(self, f'api_{cmd}'))
         
         # Handle CORS preflight for all endpoints
@@ -1893,6 +1913,35 @@ class MusicBot(commands.Bot):
 
         count = await self.fill_queue_from_vc_favorites(guild_id, int(vc_id), requester)
         return web.json_response({"success": True, "added_count": count}, headers=headers)
+
+    async def api_move(self, request: web.Request):
+        headers = {"Access-Control-Allow-Origin": "*"}
+        data = await self.get_api_data(request)
+        guild_id = int(data.get('guild_id', 0))
+        from_index = data.get('from_index')
+        to_index = data.get('to_index')
+        
+        guild = self.get_guild(guild_id)
+        if not guild: 
+            return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
+            
+        if from_index is None or to_index is None:
+            return web.json_response({"error": "Missing from_index or to_index"}, status=400, headers=headers)
+            
+        state = self.music_manager.get_state(guild_id)
+        
+        try:
+            from_idx = int(from_index)
+            to_idx = int(to_index)
+        except ValueError:
+            return web.json_response({"error": "Indexes must be integers"}, status=400, headers=headers)
+            
+        success = await state.queue.move(from_idx, to_idx)
+        if success:
+            await EmbedManager.update_status_message(self, guild_id)
+            return web.json_response({"success": True, "action": "moved"}, headers=headers)
+        else:
+            return web.json_response({"error": "Invalid indexes provided"}, status=400, headers=headers)
 
 
     # ---------------------------------------------------------

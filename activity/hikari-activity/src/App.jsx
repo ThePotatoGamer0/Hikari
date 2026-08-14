@@ -18,6 +18,28 @@ export default function App() {
   
   const [userFavorites, setUserFavorites] = useState([]);
 
+  // Performance Mode State with localStorage & Device Detection
+  const [perfMode, setPerfMode] = useState(() => {
+    const saved = localStorage.getItem('hikari_perf_mode');
+    if (saved !== null) {
+      return saved === 'true';
+    }
+    // Default: true for mobile, false for desktop
+    const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
+    return isMobile;
+  });
+
+  // Sync performance mode class to body element
+  useEffect(() => {
+    if (perfMode) {
+      document.body.classList.add('perf-mode');
+      localStorage.setItem('hikari_perf_mode', 'true');
+    } else {
+      document.body.classList.remove('perf-mode');
+      localStorage.setItem('hikari_perf_mode', 'false');
+    }
+  }, [perfMode]);
+
   const pollInterval = useRef(null);
 
   const formatProxyUrl = (url) => {
@@ -384,6 +406,13 @@ export default function App() {
           />
         </>
       )}
+
+      {/* AboutModal receives state props to control the toggle switch */}
+      <AboutModal 
+        isOpen={false} // Managed via your header state, pass `perfMode` and `setPerfMode` there
+        perfMode={perfMode}
+        onTogglePerfMode={() => setPerfMode(!perfMode)}
+      />
     </div>
   );
 }

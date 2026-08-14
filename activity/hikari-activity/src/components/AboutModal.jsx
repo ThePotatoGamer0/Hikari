@@ -1,6 +1,6 @@
 import Icons from './Icons';
 
-export default function AboutModal({ isOpen, onClose }) {
+export default function AboutModal({ isOpen, onClose, perfMode, onTogglePerfMode }) {
   if (!isOpen) return null;
 
   return (
@@ -34,7 +34,40 @@ export default function AboutModal({ isOpen, onClose }) {
         </h2>
         
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', fontSize: '0.95rem', color: '#dbdee1' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          
+          {/* Performance Mode Toggle Switch Section */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.6rem 0.8rem', borderRadius: '8px' }}>
+            <div>
+              <strong>Performance Mode</strong>
+              <div style={{ fontSize: '0.75rem', color: '#b5bac1' }}>Disables heavy blurs for speed</div>
+            </div>
+            <button 
+              onClick={onTogglePerfMode}
+              style={{
+                background: perfMode ? '#23a55a' : '#4e5058',
+                border: 'none',
+                width: '44px',
+                height: '24px',
+                borderRadius: '12px',
+                position: 'relative',
+                cursor: 'pointer',
+                transition: 'background 0.2s'
+              }}
+            >
+              <div style={{
+                width: '18px',
+                height: '18px',
+                background: '#fff',
+                borderRadius: '50%',
+                position: 'absolute',
+                top: '3px',
+                left: perfMode ? '23px' : '3px',
+                transition: 'left 0.2s'
+              }} />
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.4rem' }}>
             <span><strong>Version:</strong></span>
             <span>2.5.0</span>
           </div>

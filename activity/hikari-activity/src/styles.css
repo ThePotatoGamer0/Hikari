@@ -666,3 +666,44 @@ body {
   color: var(--accent);
   text-decoration: underline;
 }
+
+/* =========================================
+   PERFORMANCE MODE
+   ========================================= */
+body.perf-mode .blurred-background {
+  filter: none !important;
+  background-image: none !important;
+  background-color: var(--bg-dark) !important;
+}
+
+body.perf-mode .right-panel,
+body.perf-mode .filter-select,
+body.perf-mode .queue-search-input,
+body.perf-mode .lyrics-offset-controls,
+body.perf-mode .resume-sync-btn,
+body.perf-mode .context-menu,
+body.perf-mode .info-modal-overlay {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body.perf-mode .right-panel {
+  background: #111214 !important;
+}
+
+body.perf-mode .context-menu,
+body.perf-mode .info-modal {
+  background: #1e1f22 !important;
+}
+
+body.perf-mode .info-modal-overlay {
+  background: rgba(0, 0, 0, 0.85) !important;
+}
+
+body.perf-mode .queue-search-input,
+body.perf-mode .filter-select,
+body.perf-mode .resume-sync-btn,
+body.perf-mode .lyrics-offset-controls {
+  background: #2b2d31 !important;
+  border-color: transparent !important;
+}

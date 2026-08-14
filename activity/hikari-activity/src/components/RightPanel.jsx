@@ -179,7 +179,6 @@ export default function RightPanel({
 
   return (
     <div className="right-panel">
-      {/* UPDATE: The gridTemplateColumns now uses `auto` at the end to hug the new Info Button */}
       <div className="tabs-header" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr auto', display: 'grid', alignItems: 'center' }}>
         <button className={`tab-btn ${activeTab === 'queue' ? 'active' : ''}`} onClick={() => setActiveTab('queue')}>Up Next</button>
         <button className={`tab-btn ${activeTab === 'lyrics' ? 'active' : ''}`} onClick={() => setActiveTab('lyrics')}>Lyrics</button>
@@ -232,6 +231,7 @@ export default function RightPanel({
                     isFavorited={userFavorites.some(f => f.lavalink_identifier === (queueTrack.lavalink_identifier || queueTrack.uri || queueTrack.identifier))}
                     onFavoriteToggle={onFavoriteToggle}
                     openInfoModal={openInfoModal}
+                    onContextMenu={(e) => handleContextMenu(e, queueTrack)}
                   />
                 ))
               )}
@@ -305,6 +305,7 @@ export default function RightPanel({
                   isFavorited={userFavorites.some(f => f.lavalink_identifier === (searchTrack.info?.uri || searchTrack.uri || searchTrack.info?.identifier || searchTrack.identifier))}
                   onFavoriteToggle={onFavoriteToggle}
                   openInfoModal={openInfoModal}
+                  onContextMenu={(e) => handleContextMenu(e, searchTrack)}
                 />
               ))}
             </div>
@@ -339,6 +340,7 @@ export default function RightPanel({
                     isFavorited={true}
                     onFavoriteToggle={onFavoriteToggle}
                     openInfoModal={openInfoModal}
+                    onContextMenu={(e) => handleContextMenu(e, favTrack)}
                   />
                 ))
               )}

@@ -8,7 +8,8 @@ export default function TrackRow({
   isFavorited, 
   onFavoriteToggle, 
   openInfoModal,
-  index 
+  index,
+  onContextMenu
 }) {
   const [flashState, setFlashState] = useState(null); 
 
@@ -117,6 +118,7 @@ export default function TrackRow({
     <div 
       className="queue-item track-row-container" 
       onClick={() => openInfoModal && openInfoModal(track)}
+      onContextMenu={onContextMenu}
       style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', marginBottom: '0.5rem' }}
     >
       {index && (
@@ -171,18 +173,25 @@ export default function TrackRow({
           <button 
             className="remove-btn"
             style={{ color: '#23a55a' }}
+            title="Left Click: Add to Queue | Right Click: Play Next"
             onClick={(e) => {
               e.stopPropagation();
               onAction('play', { query: track.uri });
             }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onAction('playnext', { query: track.uri });
+            }}
           >
-            {Icons.Plus}
+            {Icons.Play}
           </button>
         )}
 
         {context === 'queue' && (
           <button 
             className="remove-btn"
+            title="Remove from Queue"
             onClick={(e) => {
               e.stopPropagation(); 
               onAction('remove', { uid: track.uid });
@@ -196,9 +205,15 @@ export default function TrackRow({
           <button 
             className="remove-btn"
             style={{ color: '#5865f2' }}
+            title="Left Click: Add to Queue | Right Click: Play Next"
             onClick={(e) => {
               e.stopPropagation();
               onAction('play', { query: track.uri });
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onAction('playnext', { query: track.uri });
             }}
           >
             {Icons.Play}

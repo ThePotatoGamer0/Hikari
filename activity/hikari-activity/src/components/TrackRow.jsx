@@ -37,8 +37,6 @@ export default function TrackRow({
         // Trigger the long-press action!
         onAction('playnext', { query: track.uri });
         setHoldProgress(0);
-        setFlashState('success');
-        setTimeout(() => setFlashState(null), 1200);
         if (navigator.vibrate) navigator.vibrate(50); // Small haptic feedback on mobile
         startTime.current = 0; // Prevent the tap action from firing on release
       }

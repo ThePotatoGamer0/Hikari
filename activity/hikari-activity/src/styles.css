@@ -5,8 +5,20 @@
   --accent: #5865F2; /* Blurple */
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark); color: var(--text-main); overflow: hidden; }
+* { 
+  box-sizing: border-box; 
+  margin: 0; 
+  padding: 0; 
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+body { 
+  font-family: 'Segoe UI', system-ui, sans-serif; 
+  background: var(--bg-dark); 
+  color: var(--text-main); 
+  overflow: hidden; 
+}
 
 /* =========================================
    CUSTOM FROSTED SCROLLBARS
@@ -98,11 +110,13 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
 .time-labels { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; }
 
 .controls-row { display: flex; align-items: center; gap: 1.5rem; }
-.control-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; transition: 0.2s; display: flex; align-items: center; justify-content: center; }
+.control-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; transition: color 0.2s, transform 0.1s; display: flex; align-items: center; justify-content: center; }
 .control-btn:hover { color: var(--text-main); }
+.control-btn:active { transform: scale(0.85); }
 .control-btn.active { color: var(--accent); }
-.control-btn.main-play { color: var(--text-main); width: 64px; height: 64px; background: rgba(255,255,255,0.15); border-radius: 50%; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+.control-btn.main-play { color: var(--text-main); width: 64px; height: 64px; background: rgba(255,255,255,0.15); border-radius: 50%; box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: transform 0.15s, background 0.2s; }
 .control-btn.main-play:hover { transform: scale(1.05); background: rgba(255,255,255,0.25); }
+.control-btn.main-play:active { transform: scale(0.95); }
 
 /* =========================================
    NEW: AUDIO FILTER DROPDOWN
@@ -166,6 +180,13 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
 .tab-btn { background: none; border: none; color: var(--text-muted); font-size: 1.1rem; font-weight: 600; padding: 0.5rem 1rem; cursor: pointer; margin-right: 1rem; border-bottom: 2px solid transparent; transition: 0.2s; }
 .tab-btn.active { color: var(--text-main); border-bottom-color: var(--text-main); }
 
+.tabs-header button[title="About Hikari"] {
+  transition: transform 0.1s, color 0.2s;
+}
+.tabs-header button[title="About Hikari"]:active {
+  transform: scale(0.8);
+}
+
 .tab-content { flex: 1; overflow-y: auto; padding: 1.5rem 2rem; position: relative; } 
 
 .empty-state { text-align: center; color: var(--text-muted); margin-top: 2rem; }
@@ -207,8 +228,10 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark
 .queue-author { font-size: 0.8rem; color: var(--text-muted); }
 .queue-actions { display: flex; align-items: center; gap: 1rem; }
 .queue-requester { font-size: 0.8rem; color: var(--accent); background: rgba(88, 101, 242, 0.2); padding: 0.2rem 0.5rem; border-radius: 12px; }
-.remove-btn { background: none; border: none; color: #ff4a4a; cursor: pointer; opacity: 0; transition: opacity 0.2s; }
+
+.remove-btn { background: none; border: none; color: #ff4a4a; cursor: pointer; opacity: 0; transition: opacity 0.2s, transform 0.1s; }
 .queue-item:hover .remove-btn { opacity: 1; }
+.remove-btn:active { transform: scale(0.8); }
 
 /* LYRICS */
 .lyrics-container { position: relative; max-width: 600px; margin: 0 auto; }

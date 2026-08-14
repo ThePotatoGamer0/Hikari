@@ -35,23 +35,33 @@ export default function AboutModal({ isOpen, onClose, perfMode, onTogglePerfMode
         
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', fontSize: '0.95rem', color: '#dbdee1' }}>
           
-          {/* Performance Mode Toggle Switch Section */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.6rem 0.8rem', borderRadius: '8px' }}>
+          {/* Performance Mode Toggle Row (Entire row is clickable for ease of use) */}
+          <div 
+            onClick={onTogglePerfMode}
+            style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              background: 'rgba(0,0,0,0.2)', 
+              padding: '0.75rem 0.8rem', 
+              borderRadius: '8px', 
+              cursor: 'pointer',
+              userSelect: 'none'
+            }}
+          >
             <div>
               <strong>Performance Mode</strong>
               <div style={{ fontSize: '0.75rem', color: '#b5bac1' }}>Disables heavy blurs for speed</div>
             </div>
-            <button 
-              onClick={onTogglePerfMode}
+            <div 
               style={{
                 background: perfMode ? '#23a55a' : '#4e5058',
-                border: 'none',
                 width: '44px',
                 height: '24px',
                 borderRadius: '12px',
                 position: 'relative',
-                cursor: 'pointer',
-                transition: 'background 0.2s'
+                transition: 'background 0.2s',
+                flexShrink: 0
               }}
             >
               <div style={{
@@ -64,7 +74,7 @@ export default function AboutModal({ isOpen, onClose, perfMode, onTogglePerfMode
                 left: perfMode ? '23px' : '3px',
                 transition: 'left 0.2s'
               }} />
-            </button>
+            </div>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.4rem' }}>

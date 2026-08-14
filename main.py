@@ -1331,7 +1331,14 @@ class MusicBot(commands.Bot):
             # If it's a URL, a direct lavalink prefix, or a recommendation request, pass it straight through
             if query.startswith(('ytsearch:', 'ytmsearch:', 'scsearch:', 'ytrec:', 'http://', 'https://')):
                 res = await fetch_lavalink(query)
-                return web.json_response({"data": extract_tracks(res)}, headers=headers)
+                tracks = extract_tracks(res)
+                
+                # --- DEBUG PRINT FOR EXPLICIT FLAG ---
+                if tracks:
+                    logger.info(f"DEBUG - Search Result 1 pluginInfo: {tracks[0].get('pluginInfo', {})}")
+                # -------------------------------------
+                
+                return web.json_response({"data": tracks}, headers=headers)
             
             # 2. MATCH /PLAY LOGIC: Use YouTube Music (ytmsearch) for high-quality, audio-only tracks
             yt_res, sc_res = await asyncio.gather(
@@ -1341,6 +1348,13 @@ class MusicBot(commands.Bot):
             
             yt_tracks = extract_tracks(yt_res)
             sc_tracks = extract_tracks(sc_res)
+            
+            # --- DEBUG PRINT FOR EXPLICIT FLAG ---
+            if yt_tracks:
+                logger.info(f"DEBUG - YouTube Music Search Result 1 pluginInfo: {yt_tracks[0].get('pluginInfo', {})}")
+            if sc_tracks:
+                logger.info(f"DEBUG - SoundCloud Search Result 1 pluginInfo: {sc_tracks[0].get('pluginInfo', {})}")
+            # -------------------------------------
             
             # Interleave the results (1 YT, 1 SC, 1 YT, 1 SC...)
             combined = []
@@ -1472,6 +1486,11 @@ class MusicBot(commands.Bot):
             
         tracks = await wavelink.Playable.search(query)
         if not tracks: return web.json_response({"error": "No tracks found"}, status=404, headers=headers)
+        
+        # --- DEBUG: CHECK FOR EXPLICIT FLAG ---
+        track_to_check = tracks.tracks[0] if isinstance(tracks, wavelink.Playlist) else tracks[0]
+        logger.info(f"DEBUG - Track '{track_to_check.title}' plugin_info: {getattr(track_to_check, 'plugin_info', 'Not Found')}")
+        # --------------------------------------
         
         vc_id = data.get('voice_channel_id') or state.voice_channel_id
         if not vc_id: return web.json_response({"error": "No voice channel provided or active"}, status=400, headers=headers)

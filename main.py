@@ -240,23 +240,28 @@ class QueueManager:
                 return found
             return None
 
-    async def move(self, from_index: int, to_index: int) -> bool:
-        """Moves a track from one position to another in the queue."""
+    async def move(self, uid: str, to_index: int) -> bool:
+        """Moves a track using its UID to prevent race conditions during song changes."""
         async with self._lock:
-            if from_index < 0 or from_index >= len(self._queue):
+            temp_list = list(self._queue)
+            from_index = next((i for i, req in enumerate(temp_list) if req.uid.upper() == uid.upper()), None)
+            
+            if from_index is None:
                 return False
-            if to_index < 0 or to_index >= len(self._queue):
-                return False
+                
+            if to_index < 0:
+                to_index = 0
+            elif to_index > len(temp_list) - 1:
+                to_index = len(temp_list) - 1
+                
             if from_index == to_index:
                 return True
                 
-            # Temporarily convert to list to allow arbitrary insert
-            temp_list = list(self._queue)
             item = temp_list.pop(from_index)
             temp_list.insert(to_index, item)
             self._queue = deque(temp_list)
             
-            self._logger.info(f"Track moved from position {from_index} to {to_index}.")
+            self._logger.info(f"Track '{item.track.title}' moved to position {to_index}.")
             self._save()
             return True
 
@@ -1332,12 +1337,6 @@ class MusicBot(commands.Bot):
             if query.startswith(('ytsearch:', 'ytmsearch:', 'scsearch:', 'ytrec:', 'http://', 'https://')):
                 res = await fetch_lavalink(query)
                 tracks = extract_tracks(res)
-                
-                # --- DEBUG PRINT FOR EXPLICIT FLAG ---
-                if tracks:
-                    logger.info(f"DEBUG - Search Result 1 pluginInfo: {tracks[0].get('pluginInfo', {})}")
-                # -------------------------------------
-                
                 return web.json_response({"data": tracks}, headers=headers)
             
             # 2. MATCH /PLAY LOGIC: Use YouTube Music (ytmsearch) for high-quality, audio-only tracks
@@ -1348,13 +1347,6 @@ class MusicBot(commands.Bot):
             
             yt_tracks = extract_tracks(yt_res)
             sc_tracks = extract_tracks(sc_res)
-            
-            # --- DEBUG PRINT FOR EXPLICIT FLAG ---
-            if yt_tracks:
-                logger.info(f"DEBUG - YouTube Music Search Result 1 pluginInfo: {yt_tracks[0].get('pluginInfo', {})}")
-            if sc_tracks:
-                logger.info(f"DEBUG - SoundCloud Search Result 1 pluginInfo: {sc_tracks[0].get('pluginInfo', {})}")
-            # -------------------------------------
             
             # Interleave the results (1 YT, 1 SC, 1 YT, 1 SC...)
             combined = []
@@ -1486,11 +1478,6 @@ class MusicBot(commands.Bot):
             
         tracks = await wavelink.Playable.search(query)
         if not tracks: return web.json_response({"error": "No tracks found"}, status=404, headers=headers)
-        
-        # --- DEBUG: CHECK FOR EXPLICIT FLAG ---
-        track_to_check = tracks.tracks[0] if isinstance(tracks, wavelink.Playlist) else tracks[0]
-        logger.info(f"DEBUG - Track '{track_to_check.title}' plugin_info: {getattr(track_to_check, 'plugin_info', 'Not Found')}")
-        # --------------------------------------
         
         vc_id = data.get('voice_channel_id') or state.voice_channel_id
         if not vc_id: return web.json_response({"error": "No voice channel provided or active"}, status=400, headers=headers)
@@ -1937,30 +1924,29 @@ class MusicBot(commands.Bot):
         headers = {"Access-Control-Allow-Origin": "*"}
         data = await self.get_api_data(request)
         guild_id = int(data.get('guild_id', 0))
-        from_index = data.get('from_index')
+        uid = data.get('uid')
         to_index = data.get('to_index')
         
         guild = self.get_guild(guild_id)
         if not guild: 
             return web.json_response({"error": "Guild not found"}, status=404, headers=headers)
             
-        if from_index is None or to_index is None:
-            return web.json_response({"error": "Missing from_index or to_index"}, status=400, headers=headers)
+        if not uid or to_index is None:
+            return web.json_response({"error": "Missing uid or to_index"}, status=400, headers=headers)
             
         state = self.music_manager.get_state(guild_id)
         
         try:
-            from_idx = int(from_index)
             to_idx = int(to_index)
         except ValueError:
-            return web.json_response({"error": "Indexes must be integers"}, status=400, headers=headers)
+            return web.json_response({"error": "Index must be an integer"}, status=400, headers=headers)
             
-        success = await state.queue.move(from_idx, to_idx)
+        success = await state.queue.move(uid, to_idx)
         if success:
             await EmbedManager.update_status_message(self, guild_id)
             return web.json_response({"success": True, "action": "moved"}, headers=headers)
         else:
-            return web.json_response({"error": "Invalid indexes provided"}, status=400, headers=headers)
+            return web.json_response({"error": "Invalid UID or bounds"}, status=400, headers=headers)
 
 
     # ---------------------------------------------------------

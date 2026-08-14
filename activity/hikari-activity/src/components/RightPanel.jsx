@@ -52,28 +52,36 @@ export default function RightPanel({
   const [searchResults, setSearchResults] = useState([]);
   const [searchStatus, setSearchStatus] = useState('');
 
-  // Drag-and-Drop Local Queue State (prevents snapping during 2s poll interval)
+  // Drag-and-Drop Local Queue State
   const [localQueue, setLocalQueue] = useState([]);
   const [activeDragId, setActiveDragId] = useState(null);
+  const syncLock = useRef(null); // Prevents poll from overwriting optimistic UI
 
   const scrollRef = useRef(null);
   const track = status?.current_track;
 
   // Sync the master queue to the local UI queue when not actively dragging
   useEffect(() => {
-    if (!activeDragId) {
+    // If the queue size drastically changes (e.g. a song finishes), force a break of the lock to prevent out-of-bounds errors.
+    const lengthMismatch = status?.queue?.length !== localQueue.length;
+
+    if (!activeDragId && (!syncLock.current || lengthMismatch)) {
+      if (syncLock.current && lengthMismatch) {
+        clearTimeout(syncLock.current);
+        syncLock.current = null;
+      }
       const rawQueue = status?.queue || [];
       setLocalQueue(rawQueue.map((t, index) => ({ ...t, originalIndex: index + 1 })));
     }
-  }, [status?.queue, activeDragId]);
+  }, [status?.queue, activeDragId, localQueue.length]);
 
   // Set up sensors for drag-and-drop
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: { distance: 5 }, // 5px movement required to drag on desktop
+      activationConstraint: { distance: 5 }, 
     }),
     useSensor(TouchSensor, {
-      activationConstraint: { delay: 100, tolerance: 5 }, // 100ms hold required on mobile to prevent scroll locking
+      activationConstraint: { delay: 100, tolerance: 5 }, 
     }),
     useSensor(KeyboardSensor)
   );
@@ -93,8 +101,14 @@ export default function RightPanel({
       // Optimistically update the UI
       setLocalQueue((items) => arrayMove(items, oldIndex, newIndex));
       
-      // Send the move action to the backend
-      onAction('move', { from_index: oldIndex, to_index: newIndex });
+      // Lock the UI from background poll updates for 2.5 seconds
+      if (syncLock.current) clearTimeout(syncLock.current);
+      syncLock.current = setTimeout(() => {
+        syncLock.current = null;
+      }, 2500);
+
+      // Send the move action to the backend using UID to prevent race conditions
+      onAction('move', { uid: active.id, to_index: newIndex });
     }
   };
 
@@ -303,7 +317,7 @@ export default function RightPanel({
                         key={queueTrack.uid}
                         track={queueTrack}
                         context="queue"
-                        isSearchActive={!!queueSearch} // Disable dragging if filtering
+                        isSearchActive={!!queueSearch} 
                         index={queueTrack.originalIndex} 
                         onAction={onAction}
                         isFavorited={userFavorites.some(f => f.lavalink_identifier === (queueTrack.lavalink_identifier || queueTrack.uri || queueTrack.identifier))}

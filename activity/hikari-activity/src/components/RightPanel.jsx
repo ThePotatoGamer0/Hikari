@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import Icons from './Icons';
 import ContextMenu from './ContextMenu';
 import TrackRow from './TrackRow';
-import AboutModal from './AboutModal';
 import ConfirmModal from './ConfirmModal';
 
 const ContextIcons = {
@@ -17,14 +16,14 @@ export default function RightPanel({
   guildId, 
   userFavorites = [], 
   onFavoriteToggle,
-  currentUser 
+  currentUser,
+  onOpenAbout
 }) {
   const [activeTab, setActiveTab] = useState('queue');
   const [queueSearch, setQueueSearch] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
   
   // Modals
-  const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isClearQueueOpen, setIsClearQueueOpen] = useState(false);
   
   // Lyrics Engine State
@@ -199,7 +198,7 @@ export default function RightPanel({
         <button className={`tab-btn ${activeTab === 'search' ? 'active' : ''}`} onClick={() => setActiveTab('search')}>Search</button>
         <button className={`tab-btn ${activeTab === 'favorites' ? 'active' : ''}`} onClick={() => setActiveTab('favorites')}>Library</button>
         <button 
-          onClick={() => setIsAboutOpen(true)}
+          onClick={onOpenAbout}
           style={{ background: 'none', border: 'none', color: '#b5bac1', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 0.5rem' }}
           title="About Hikari"
         >
@@ -364,8 +363,6 @@ export default function RightPanel({
         <button className="resume-sync-btn" onClick={() => setIsAutoScroll(true)}>Resume Sync</button>
       )}
 
-      <AboutModal isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
-      
       <ConfirmModal 
         isOpen={isClearQueueOpen}
         onClose={() => setIsClearQueueOpen(false)}

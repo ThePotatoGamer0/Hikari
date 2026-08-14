@@ -11,7 +11,6 @@ export default function TrackRow({
   onFavoriteToggle, 
   openInfoModal,
   index,
-  onContextMenu,
   isSearchActive
 }) {
   const [flashState, setFlashState] = useState(null); 
@@ -202,7 +201,6 @@ export default function TrackRow({
       ref={setNodeRef}
       className="queue-item track-row-container" 
       onClick={() => openInfoModal && openInfoModal(track)}
-      onContextMenu={onContextMenu}
       style={rowStyle}
     >
       {holdProgress > 0 && (

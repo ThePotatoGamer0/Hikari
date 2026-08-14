@@ -14,14 +14,8 @@ import {
   verticalListSortingStrategy 
 } from '@dnd-kit/sortable';
 import Icons from './Icons';
-import ContextMenu from './ContextMenu';
 import TrackRow from './TrackRow';
 import ConfirmModal from './ConfirmModal';
-
-const ContextIcons = {
-  Copy: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>,
-  External: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-};
 
 export default function RightPanel({ 
   status, 
@@ -35,7 +29,6 @@ export default function RightPanel({
 }) {
   const [activeTab, setActiveTab] = useState('queue');
   const [queueSearch, setQueueSearch] = useState('');
-  const [contextMenu, setContextMenu] = useState(null);
   
   // Modals
   const [isClearQueueOpen, setIsClearQueueOpen] = useState(false);
@@ -244,11 +237,6 @@ export default function RightPanel({
     }
   }, [localPos, activeTab, isAutoScroll, lyricOffset]);
 
-  const handleContextMenu = (e, trackData) => {
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, track: trackData });
-  };
-
   const handleClearQueue = () => {
     onAction('clearqueue');
   };
@@ -323,7 +311,6 @@ export default function RightPanel({
                         isFavorited={userFavorites.some(f => f.lavalink_identifier === (queueTrack.lavalink_identifier || queueTrack.uri || queueTrack.identifier))}
                         onFavoriteToggle={onFavoriteToggle}
                         openInfoModal={openInfoModal}
-                        onContextMenu={(e) => handleContextMenu(e, queueTrack)}
                       />
                     ))}
                   </SortableContext>
@@ -399,7 +386,6 @@ export default function RightPanel({
                   isFavorited={userFavorites.some(f => f.lavalink_identifier === (searchTrack.info?.uri || searchTrack.uri || searchTrack.info?.identifier || searchTrack.identifier))}
                   onFavoriteToggle={onFavoriteToggle}
                   openInfoModal={openInfoModal}
-                  onContextMenu={(e) => handleContextMenu(e, searchTrack)}
                 />
               ))}
             </div>
@@ -434,7 +420,6 @@ export default function RightPanel({
                     isFavorited={true}
                     onFavoriteToggle={onFavoriteToggle}
                     openInfoModal={openInfoModal}
-                    onContextMenu={(e) => handleContextMenu(e, favTrack)}
                   />
                 ))
               )}
@@ -454,26 +439,6 @@ export default function RightPanel({
         title="Clear Queue"
         message="Are you sure you want to remove all upcoming tracks from the queue? This cannot be undone."
       />
-
-      {contextMenu && (
-        <ContextMenu 
-          x={contextMenu.x} y={contextMenu.y} onClose={() => setContextMenu(null)}
-          options={[
-            {
-              label: "Copy Link", icon: ContextIcons.Copy,
-              onClick: () => navigator.clipboard.writeText(contextMenu.track.uri)
-            },
-            {
-              label: "Open in Browser", icon: ContextIcons.External,
-              onClick: () => window.open(contextMenu.track.uri, '_blank')
-            },
-            {
-              label: "Remove Track", icon: Icons.Trash, danger: true,
-              onClick: () => onAction('remove', { uid: contextMenu.track.uid })
-            }
-          ]}
-        />
-      )}
     </div>
   );
 }

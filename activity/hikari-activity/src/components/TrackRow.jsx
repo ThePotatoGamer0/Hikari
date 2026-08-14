@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Icons from './Icons';
 
 export default function TrackRow({ 
@@ -12,6 +12,59 @@ export default function TrackRow({
   onContextMenu
 }) {
   const [flashState, setFlashState] = useState(null); 
+  
+  // Advanced Hold-to-Fill Logic
+  const [holdProgress, setHoldProgress] = useState(0);
+  const animationRef = useRef(null);
+  const startTime = useRef(0);
+  const HOLD_DURATION = 1500; // 1.5 seconds to trigger
+
+  const startHold = (e) => {
+    // Only trigger on primary pointer (left click or single touch)
+    if (e.button !== undefined && e.button !== 0) return;
+    
+    startTime.current = Date.now();
+    
+    const animate = () => {
+      const elapsed = Date.now() - startTime.current;
+      const progress = Math.min((elapsed / HOLD_DURATION) * 100, 100);
+      
+      setHoldProgress(progress);
+      
+      if (progress < 100) {
+        animationRef.current = requestAnimationFrame(animate);
+      } else {
+        // Trigger the long-press action!
+        onAction('playnext', { query: track.uri });
+        setHoldProgress(0);
+        setFlashState('success');
+        setTimeout(() => setFlashState(null), 1200);
+        if (navigator.vibrate) navigator.vibrate(50); // Small haptic feedback on mobile
+        startTime.current = 0; // Prevent the tap action from firing on release
+      }
+    };
+    
+    animationRef.current = requestAnimationFrame(animate);
+  };
+
+  const endHold = (e) => {
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+    
+    setHoldProgress(0);
+    
+    // If startTime is 0, the long-press action already fired.
+    if (startTime.current > 0) {
+      const elapsed = Date.now() - startTime.current;
+      // If held for less than 400ms, treat it as a standard tap
+      if (elapsed < 400) {
+        onAction('play', { query: track.uri });
+      }
+      startTime.current = 0;
+    }
+  };
 
   // Intercept raw Lavalink artwork URLs and force them through the Discord proxy mappings
   const formatProxyUrl = (url) => {
@@ -119,15 +172,40 @@ export default function TrackRow({
       className="queue-item track-row-container" 
       onClick={() => openInfoModal && openInfoModal(track)}
       onContextMenu={onContextMenu}
-      style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', marginBottom: '0.5rem' }}
+      style={{ 
+        cursor: 'pointer', 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '0.75rem', 
+        padding: '0.5rem 0.75rem', 
+        borderRadius: '8px', 
+        background: 'rgba(255,255,255,0.02)', 
+        marginBottom: '0.5rem',
+        position: 'relative',
+        overflow: 'hidden'
+      }}
     >
+      {/* Row-level progress fill for mobile hold visibility */}
+      {holdProgress > 0 && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          height: '100%',
+          width: `${holdProgress}%`,
+          backgroundColor: context === 'search' ? 'rgba(35, 165, 90, 0.2)' : 'rgba(88, 101, 242, 0.2)',
+          zIndex: 0,
+          transition: 'width 0.1s linear'
+        }} />
+      )}
+
       {index && (
-        <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#b5bac1', minWidth: '1.2rem', textAlign: 'right' }}>
+        <span style={{ position: 'relative', zIndex: 1, fontSize: '0.85rem', fontWeight: 'bold', color: '#b5bac1', minWidth: '1.2rem', textAlign: 'right' }}>
           {index}.
         </span>
       )}
 
-      <div style={{ width: '40px', height: '40px', borderRadius: '4px', overflow: 'hidden', background: '#1E1F22', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ position: 'relative', zIndex: 1, width: '40px', height: '40px', borderRadius: '4px', overflow: 'hidden', background: '#1E1F22', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {dynamicArt ? (
           <img src={dynamicArt} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
@@ -135,7 +213,7 @@ export default function TrackRow({
         )}
       </div>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ position: 'relative', zIndex: 1, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <span style={{ fontSize: '0.9rem', fontWeight: '500', color: '#f2f3f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {cleanTitle}
         </span>
@@ -148,7 +226,7 @@ export default function TrackRow({
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+      <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
         <button 
           onClick={handleFavClick}
           className={`fav-toggle-btn ${flashState ? `flash-${flashState}` : ''}`}
@@ -169,20 +247,30 @@ export default function TrackRow({
           {isFavorited || flashState === 'success' ? Icons.HeartFilled : Icons.Heart}
         </button>
 
-        {context === 'search' && (
+        {(context === 'search' || context === 'favorites') && (
           <button 
-            className="remove-btn"
-            style={{ color: '#23a55a' }}
-            title="Left Click: Add to Queue | Right Click: Play Next"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAction('play', { query: track.uri });
+            className="remove-btn hold-action-btn"
+            style={{ 
+              color: context === 'search' ? '#23a55a' : '#5865f2',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '4px',
+              borderRadius: '4px'
             }}
+            title="Tap: Add to Queue | Hold/Right-Click: Play Next"
+            onPointerDown={startHold}
+            onPointerUp={endHold}
+            onPointerLeave={endHold}
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
               onAction('playnext', { query: track.uri });
             }}
+            onClick={(e) => e.stopPropagation()} 
           >
             {Icons.Play}
           </button>
@@ -198,25 +286,6 @@ export default function TrackRow({
             }}
           >
             {Icons.Trash}
-          </button>
-        )}
-
-        {context === 'favorites' && (
-          <button 
-            className="remove-btn"
-            style={{ color: '#5865f2' }}
-            title="Left Click: Add to Queue | Right Click: Play Next"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAction('play', { query: track.uri });
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onAction('playnext', { query: track.uri });
-            }}
-          >
-            {Icons.Play}
           </button>
         )}
       </div>

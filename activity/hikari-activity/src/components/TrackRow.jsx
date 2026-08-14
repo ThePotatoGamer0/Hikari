@@ -229,7 +229,8 @@ export default function TrackRow({
             padding: '4px',
             marginRight: '-4px', // Tucks it nicely next to the index
             position: 'relative',
-            zIndex: 10
+            zIndex: 10,
+            touchAction: 'none' // Fixes mobile drag-and-drop by blocking scroll when gripping
           }}
         >
           {/* Inline SVG for GripVertical */}

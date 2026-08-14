@@ -1,4 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
+import { 
+  DndContext, 
+  closestCenter, 
+  KeyboardSensor, 
+  PointerSensor, 
+  useSensor, 
+  useSensors,
+  TouchSensor
+} from '@dnd-kit/core';
+import { 
+  arrayMove, 
+  SortableContext, 
+  verticalListSortingStrategy 
+} from '@dnd-kit/sortable';
 import Icons from './Icons';
 import ContextMenu from './ContextMenu';
 import TrackRow from './TrackRow';
@@ -38,8 +52,51 @@ export default function RightPanel({
   const [searchResults, setSearchResults] = useState([]);
   const [searchStatus, setSearchStatus] = useState('');
 
+  // Drag-and-Drop Local Queue State (prevents snapping during 2s poll interval)
+  const [localQueue, setLocalQueue] = useState([]);
+  const [activeDragId, setActiveDragId] = useState(null);
+
   const scrollRef = useRef(null);
   const track = status?.current_track;
+
+  // Sync the master queue to the local UI queue when not actively dragging
+  useEffect(() => {
+    if (!activeDragId) {
+      const rawQueue = status?.queue || [];
+      setLocalQueue(rawQueue.map((t, index) => ({ ...t, originalIndex: index + 1 })));
+    }
+  }, [status?.queue, activeDragId]);
+
+  // Set up sensors for drag-and-drop
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 5 }, // 5px movement required to drag on desktop
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 100, tolerance: 5 }, // 100ms hold required on mobile to prevent scroll locking
+    }),
+    useSensor(KeyboardSensor)
+  );
+
+  const handleDragStart = (event) => {
+    setActiveDragId(event.active.id);
+  };
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    setActiveDragId(null);
+
+    if (over && active.id !== over.id) {
+      const oldIndex = localQueue.findIndex((item) => item.uid === active.id);
+      const newIndex = localQueue.findIndex((item) => item.uid === over.id);
+
+      // Optimistically update the UI
+      setLocalQueue((items) => arrayMove(items, oldIndex, newIndex));
+      
+      // Send the move action to the backend
+      onAction('move', { from_index: oldIndex, to_index: newIndex });
+    }
+  };
 
   // Passive Event Listeners for smooth mobile scrolling
   useEffect(() => {
@@ -183,9 +240,9 @@ export default function RightPanel({
   };
 
   const adjustedPos = localPos + (lyricOffset * 1000);
-  const rawQueue = status?.queue || [];
-  const queueWithIndexes = rawQueue.map((t, index) => ({ ...t, originalIndex: index + 1 }));
-  const filteredQueue = queueWithIndexes.filter(queueTrack => {
+  
+  // Filter the local queue dynamically
+  const filteredQueue = localQueue.filter(queueTrack => {
     if (!queueSearch) return true;
     return queueTrack.title?.toLowerCase().includes(queueSearch.toLowerCase()) || queueTrack.author?.toLowerCase().includes(queueSearch.toLowerCase());
   });
@@ -209,7 +266,7 @@ export default function RightPanel({
       <div className="tab-content" ref={scrollRef}>
         {activeTab === 'queue' && (
           <div className="queue-tab-wrapper">
-            {rawQueue.length > 0 && (
+            {localQueue.length > 0 && (
               <div className="queue-search-wrapper" style={{ display: 'flex', gap: '0.5rem' }}>
                 <input 
                   type="text" className="queue-search-input" placeholder="Filter queue..."
@@ -226,24 +283,37 @@ export default function RightPanel({
               </div>
             )}
             <div className="queue-list">
-              {rawQueue.length === 0 ? (
+              {localQueue.length === 0 ? (
                 <div className="empty-state">Queue is empty</div>
               ) : filteredQueue.length === 0 ? (
                 <div className="empty-state">No matching tracks found</div>
               ) : (
-                filteredQueue.map((queueTrack) => (
-                  <TrackRow 
-                    key={queueTrack.uid}
-                    track={queueTrack}
-                    context="queue"
-                    index={queueTrack.originalIndex} 
-                    onAction={onAction}
-                    isFavorited={userFavorites.some(f => f.lavalink_identifier === (queueTrack.lavalink_identifier || queueTrack.uri || queueTrack.identifier))}
-                    onFavoriteToggle={onFavoriteToggle}
-                    openInfoModal={openInfoModal}
-                    onContextMenu={(e) => handleContextMenu(e, queueTrack)}
-                  />
-                ))
+                <DndContext 
+                  sensors={sensors} 
+                  collisionDetection={closestCenter} 
+                  onDragStart={handleDragStart} 
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext 
+                    items={filteredQueue.map(t => t.uid)} 
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {filteredQueue.map((queueTrack) => (
+                      <TrackRow 
+                        key={queueTrack.uid}
+                        track={queueTrack}
+                        context="queue"
+                        isSearchActive={!!queueSearch} // Disable dragging if filtering
+                        index={queueTrack.originalIndex} 
+                        onAction={onAction}
+                        isFavorited={userFavorites.some(f => f.lavalink_identifier === (queueTrack.lavalink_identifier || queueTrack.uri || queueTrack.identifier))}
+                        onFavoriteToggle={onFavoriteToggle}
+                        openInfoModal={openInfoModal}
+                        onContextMenu={(e) => handleContextMenu(e, queueTrack)}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
               )}
             </div>
           </div>

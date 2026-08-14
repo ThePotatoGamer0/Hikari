@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import Icons from './Icons';
 
 export default function TrackRow({ 
@@ -9,22 +11,53 @@ export default function TrackRow({
   onFavoriteToggle, 
   openInfoModal,
   index,
-  onContextMenu
+  onContextMenu,
+  isSearchActive
 }) {
   const [flashState, setFlashState] = useState(null); 
+  
+  // Drag and Drop integration (Only active in the queue tab, disabled if filtering)
+  const isDraggable = context === 'queue' && !isSearchActive;
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ 
+    id: track.uid || track.uri,
+    disabled: !isDraggable
+  });
+
+  const rowStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    cursor: isDraggable ? 'default' : 'pointer', 
+    display: 'flex', 
+    alignItems: 'center', 
+    gap: '0.75rem', 
+    padding: '0.5rem 0.75rem', 
+    borderRadius: '8px', 
+    background: 'rgba(255,255,255,0.02)', 
+    marginBottom: '0.5rem',
+    position: 'relative',
+    overflow: 'hidden',
+    zIndex: isDragging ? 99 : 1
+  };
   
   // Advanced Hold-to-Fill Logic
   const [holdProgress, setHoldProgress] = useState(0);
   const animationRef = useRef(null);
   const startTime = useRef(0);
-  const isTouch = useRef(false); // Tracks if the user is on mobile to prevent double-firing
-  const HOLD_DURATION = 1500; // 1.5 seconds to trigger
+  const isTouch = useRef(false);
+  const HOLD_DURATION = 1500; 
 
   const startHold = (e) => {
     if (e.pointerType === 'touch') isTouch.current = true;
     else isTouch.current = false;
 
-    // Only trigger on primary pointer (left click or single touch)
     if (e.button !== undefined && e.button !== 0) return;
     
     startTime.current = Date.now();
@@ -38,11 +71,10 @@ export default function TrackRow({
       if (progress < 100) {
         animationRef.current = requestAnimationFrame(animate);
       } else {
-        // Trigger the long-press action!
         onAction('playnext', { query: track.uri });
         setHoldProgress(0);
-        if (navigator.vibrate) navigator.vibrate(50); // Small haptic feedback on mobile
-        startTime.current = 0; // Prevent the tap action from firing on release
+        if (navigator.vibrate) navigator.vibrate(50);
+        startTime.current = 0; 
       }
     };
     
@@ -57,10 +89,8 @@ export default function TrackRow({
     
     setHoldProgress(0);
     
-    // If startTime is 0, the long-press action already fired.
     if (startTime.current > 0) {
       const elapsed = Date.now() - startTime.current;
-      // If held for less than 400ms, treat it as a standard tap
       if (elapsed < 400) {
         onAction('play', { query: track.uri });
       }
@@ -68,7 +98,6 @@ export default function TrackRow({
     }
   };
 
-  // Intercept raw Lavalink artwork URLs and force them through the Discord proxy mappings
   const formatProxyUrl = (url) => {
     if (!url) return null;
     try {
@@ -96,7 +125,6 @@ export default function TrackRow({
   const isYouTube = track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be');
   const isSoundCloud = track.uri?.includes('soundcloud.com');
 
-  // Dynamically resolve missing artwork
   useEffect(() => {
     const existingArt = formatProxyUrl(track.artworkUrl || track.artwork);
     if (existingArt) {
@@ -171,23 +199,12 @@ export default function TrackRow({
 
   return (
     <div 
+      ref={setNodeRef}
       className="queue-item track-row-container" 
       onClick={() => openInfoModal && openInfoModal(track)}
       onContextMenu={onContextMenu}
-      style={{ 
-        cursor: 'pointer', 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: '0.75rem', 
-        padding: '0.5rem 0.75rem', 
-        borderRadius: '8px', 
-        background: 'rgba(255,255,255,0.02)', 
-        marginBottom: '0.5rem',
-        position: 'relative',
-        overflow: 'hidden'
-      }}
+      style={rowStyle}
     >
-      {/* Row-level progress fill for mobile hold visibility */}
       {holdProgress > 0 && (
         <div style={{
           position: 'absolute',
@@ -199,6 +216,30 @@ export default function TrackRow({
           zIndex: 0,
           transition: 'width 0.1s linear'
         }} />
+      )}
+
+      {/* Drag Handle (Only active when sortable) */}
+      {isDraggable && (
+        <div 
+          {...attributes} 
+          {...listeners}
+          style={{ 
+            cursor: 'grab', 
+            color: '#4e5058', 
+            display: 'flex', 
+            alignItems: 'center', 
+            padding: '4px',
+            marginRight: '-4px', // Tucks it nicely next to the index
+            position: 'relative',
+            zIndex: 10
+          }}
+        >
+          {/* Inline SVG for GripVertical */}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/>
+            <circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>
+          </svg>
+        </div>
       )}
 
       {index && (
@@ -267,11 +308,10 @@ export default function TrackRow({
             onPointerDown={startHold}
             onPointerUp={endHold}
             onPointerLeave={endHold}
-            onPointerCancel={endHold} // Prevents animation continuing if user scrolls
+            onPointerCancel={endHold} 
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              // Only fire Play Next via right-click if the user is using a mouse
               if (!isTouch.current) {
                 onAction('playnext', { query: track.uri });
               }

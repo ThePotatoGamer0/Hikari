@@ -42,6 +42,24 @@ export default function RightPanel({
   const scrollRef = useRef(null);
   const track = status?.current_track;
 
+  // Passive Event Listeners for smooth mobile scrolling
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+
+    const handleInteract = () => {
+      if (isAutoScroll) setIsAutoScroll(false);
+    };
+
+    container.addEventListener('touchstart', handleInteract, { passive: true });
+    container.addEventListener('wheel', handleInteract, { passive: true });
+    
+    return () => {
+      container.removeEventListener('touchstart', handleInteract);
+      container.removeEventListener('wheel', handleInteract);
+    };
+  }, [isAutoScroll]);
+
   useEffect(() => {
     if (!track || track.is_paused || activeTab !== 'lyrics') return;
     setLocalPos(track.position);
@@ -156,10 +174,6 @@ export default function RightPanel({
     }
   }, [localPos, activeTab, isAutoScroll, lyricOffset]);
 
-  const handleUserInteraction = () => {
-    if (isAutoScroll) setIsAutoScroll(false);
-  };
-
   const handleContextMenu = (e, trackData) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, track: trackData });
@@ -193,10 +207,7 @@ export default function RightPanel({
         </button>
       </div>
 
-      <div 
-        className="tab-content" ref={scrollRef}
-        onWheel={handleUserInteraction} onTouchMove={handleUserInteraction} onMouseDown={handleUserInteraction}
-      >
+      <div className="tab-content" ref={scrollRef}>
         {activeTab === 'queue' && (
           <div className="queue-tab-wrapper">
             {rawQueue.length > 0 && (

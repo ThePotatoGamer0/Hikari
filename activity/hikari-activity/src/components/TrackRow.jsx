@@ -17,9 +17,13 @@ export default function TrackRow({
   const [holdProgress, setHoldProgress] = useState(0);
   const animationRef = useRef(null);
   const startTime = useRef(0);
+  const isTouch = useRef(false); // Tracks if the user is on mobile to prevent double-firing
   const HOLD_DURATION = 1500; // 1.5 seconds to trigger
 
   const startHold = (e) => {
+    if (e.pointerType === 'touch') isTouch.current = true;
+    else isTouch.current = false;
+
     // Only trigger on primary pointer (left click or single touch)
     if (e.button !== undefined && e.button !== 0) return;
     
@@ -263,10 +267,14 @@ export default function TrackRow({
             onPointerDown={startHold}
             onPointerUp={endHold}
             onPointerLeave={endHold}
+            onPointerCancel={endHold} // Prevents animation continuing if user scrolls
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              onAction('playnext', { query: track.uri });
+              // Only fire Play Next via right-click if the user is using a mouse
+              if (!isTouch.current) {
+                onAction('playnext', { query: track.uri });
+              }
             }}
             onClick={(e) => e.stopPropagation()} 
           >

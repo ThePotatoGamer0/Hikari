@@ -88,6 +88,30 @@ def chunk_text(text: str, max_len: int = 1500) -> List[str]:
     if current_page: pages.append(current_page.strip())
     return pages if pages else ["No content available."]
 
+async def enable_sponsorblock(player: wavelink.Player):
+    """Sends a REST request to the Lavalink node to enable SponsorBlock for this player."""
+    try:
+        node = player.node
+        if not node:
+            return
+            
+        # Lavalink v4 Session API for SponsorBlock
+        url = f"{node.uri}/v4/sessions/{node.session_id}/players/{player.guild.id}/sponsorblock/categories"
+        headers = {
+            "Authorization": node.password,
+            "Content-Type": "application/json"
+        }
+        categories = ["sponsor", "intro", "outro", "interaction", "selfpromo", "music_offtest"]
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, headers=headers, json=categories) as resp:
+                if resp.status not in (200, 204):
+                    logger.warning(f"Failed to enable SponsorBlock. Status: {resp.status}")
+                else:
+                    logger.info(f"SponsorBlock enabled for Guild {player.guild.id}")
+    except Exception as e:
+        logger.error(f"Error enabling SponsorBlock: {e}")
+
 
 # ====================================
 # ICON CONFIGURATION
@@ -552,6 +576,8 @@ async def restore_guild(bot: "MusicBot", guild_id: int, vc_id: int, p_data: dict
     
     try:
         player = await vc.connect(cls=wavelink.Player)
+        await enable_sponsorblock(player)
+        
         state = bot.music_manager.get_state(guild_id)
         state.voice_channel_id = vc_id
         
@@ -1487,6 +1513,8 @@ class MusicBot(commands.Bot):
             vc = guild.get_channel(int(vc_id))
             if not vc: return web.json_response({"error": "Voice channel not found"}, status=404, headers=headers)
             player = await vc.connect(cls=wavelink.Player)
+            await enable_sponsorblock(player)
+            
             state.voice_channel_id = vc.id
             p_data = self.persistence.load_persistence(guild_id)
             p_data["voice_channel_id"] = vc.id
@@ -1551,6 +1579,8 @@ class MusicBot(commands.Bot):
             vc = guild.get_channel(int(vc_id))
             if not vc: return web.json_response({"error": "Voice channel not found"}, status=404, headers=headers)
             player = await vc.connect(cls=wavelink.Player)
+            await enable_sponsorblock(player)
+            
             state.voice_channel_id = vc.id
             p_data = self.persistence.load_persistence(guild_id)
             p_data["voice_channel_id"] = vc.id
@@ -1616,6 +1646,8 @@ class MusicBot(commands.Bot):
             vc = guild.get_channel(int(vc_id))
             if not vc: return web.json_response({"error": "Voice channel not found"}, status=404, headers=headers)
             player = await vc.connect(cls=wavelink.Player)
+            await enable_sponsorblock(player)
+            
             state.voice_channel_id = vc.id
             p_data = self.persistence.load_persistence(guild_id)
             p_data["voice_channel_id"] = vc.id
@@ -1831,6 +1863,10 @@ class MusicBot(commands.Bot):
         
         state = self.music_manager.get_state(guild_id)
         await channel.connect(cls=wavelink.Player)
+        
+        player = guild.voice_client
+        await enable_sponsorblock(player)
+        
         state.voice_channel_id = channel.id
         
         p_data = self.persistence.load_persistence(guild_id)
@@ -2060,6 +2096,8 @@ class MusicBot(commands.Bot):
         player = guild.voice_client
         if not player:
             player = await vc.connect(cls=wavelink.Player)
+            await enable_sponsorblock(player)
+            
             state.voice_channel_id = vc.id
             p_data = self.persistence.load_persistence(guild_id)
             p_data["voice_channel_id"] = vc.id
@@ -2248,6 +2286,8 @@ async def forceplay(ctx: commands.Context, *, query: str):
     
     if not ctx.voice_client:
         player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        await enable_sponsorblock(player)
+        
         p_data = bot.persistence.load_persistence(ctx.guild.id)
         p_data["voice_channel_id"] = ctx.author.voice.channel.id
         bot.persistence.save_persistence(ctx.guild.id, p_data)
@@ -2265,6 +2305,10 @@ async def movevc(ctx: commands.Context, channel: discord.VoiceChannel):
     
     state = bot.music_manager.get_state(ctx.guild.id)
     await channel.connect(cls=wavelink.Player)
+    
+    player = ctx.guild.voice_client
+    await enable_sponsorblock(player)
+    
     state.voice_channel_id = channel.id
     
     p_data = bot.persistence.load_persistence(ctx.guild.id)
@@ -2294,6 +2338,8 @@ async def playnext(ctx: commands.Context, *, query: str):
     state = bot.music_manager.get_state(ctx.guild.id)
     if not ctx.voice_client:
         player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+        await enable_sponsorblock(player)
+        
         p_data = bot.persistence.load_persistence(ctx.guild.id)
         p_data["voice_channel_id"] = ctx.author.voice.channel.id
         bot.persistence.save_persistence(ctx.guild.id, p_data)
@@ -2348,6 +2394,8 @@ async def play(ctx: commands.Context, *, query: str):
     async with state.playback_lock:
         if not ctx.voice_client:
             player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+            await enable_sponsorblock(player)
+            
             state.voice_channel_id = ctx.author.voice.channel.id
             p_data = bot.persistence.load_persistence(ctx.guild.id)
             p_data["voice_channel_id"] = state.voice_channel_id
@@ -2590,6 +2638,32 @@ async def favadd(ctx: commands.Context):
 # ====================================
 # WAVELINK TRACK SYSTEM EVENTS
 # ====================================
+@bot.event
+async def on_wavelink_extra_event(payload: wavelink.ExtraEventPayload):
+    """Listens for custom Lavalink events, like SponsorBlock segment skips."""
+    event_type = payload.data.get("type")
+    
+    if event_type == "SegmentSkipped":
+        if not payload.player or not payload.player.guild:
+            return
+            
+        guild_id = payload.player.guild.id
+        state = bot.music_manager.get_state(guild_id)
+        
+        if state.channel_id:
+            channel = bot.get_channel(state.channel_id)
+            if channel:
+                segment = payload.data.get("segment", {})
+                category = segment.get("category", "sponsor")
+                
+                # Format the category nicely (e.g., "music_offtest" -> "Music Offtest")
+                formatted_cat = category.replace("_", " ").title()
+                
+                try:
+                    await channel.send(f"{Icons.SKIP} *SponsorBlock automatically skipped a **{formatted_cat}** segment.*", delete_after=10.0)
+                except discord.HTTPException:
+                    pass
+
 @bot.event
 async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
     guild_id = payload.player.guild.id

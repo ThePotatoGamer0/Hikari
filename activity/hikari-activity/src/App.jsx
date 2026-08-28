@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { DiscordSDK } from '@discord/embedded-app-sdk';
+import { Kawarp } from '@kawarp/react';
 import LeftPanel from './components/LeftPanel';
 import RightPanel from './components/RightPanel';
 import SearchModal from './components/SearchModal';
 import InfoModal from './components/InfoModal';
-import AboutModal from './components/AboutModal'; // <-- Added missing import
+import AboutModal from './components/AboutModal';
 
 const discordSdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
 
@@ -12,7 +13,7 @@ export default function App() {
   const [guildId, setGuildId] = useState(null);
   const [status, setStatus] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isAboutOpen, setIsAboutOpen] = useState(false); // Managed for About Modal
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [infoModalTrack, setInfoModalTrack] = useState(null); 
   const [layoutMode, setLayoutMode] = useState(0); 
   const [resolvedArtUrl, setResolvedArtUrl] = useState(null);
@@ -20,7 +21,6 @@ export default function App() {
   
   const [userFavorites, setUserFavorites] = useState([]);
 
-  // Performance Mode State with localStorage & Device Detection
   const [perfMode, setPerfMode] = useState(() => {
     const saved = localStorage.getItem('hikari_perf_mode');
     if (saved !== null) {
@@ -30,7 +30,6 @@ export default function App() {
     return isMobile;
   });
 
-  // Sync performance mode class to body element
   useEffect(() => {
     if (perfMode) {
       document.body.classList.add('perf-mode');
@@ -322,48 +321,17 @@ export default function App() {
     return <div className="loading">Connecting to Voice Channel...</div>;
   }
 
-  const ambientStyles = `
-    @keyframes ambientFlow {
-      0% { transform: scale(2.5) translate(0%, 0%) rotate(0deg); }
-      33% { transform: scale(2.8) translate(4%, 6%) rotate(8deg); }
-      66% { transform: scale(2.4) translate(-4%, -3%) rotate(-8deg); }
-      100% { transform: scale(2.5) translate(0%, 0%) rotate(0deg); }
-    }
-    .ambient-flow {
-      animation: ambientFlow 35s ease-in-out infinite alternate;
-      will-change: transform;
-      filter: url(#liquid-swirl) blur(120px) saturate(180%);
-    }
-    .grain-overlay {
-      position: fixed;
-      inset: 0;
-      z-index: -1;
-      pointer-events: none;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-      opacity: 0.12;
-      mix-blend-mode: screen;
-    }
-  `;
-
   return (
     <div className="app-container">
-      <style>{ambientStyles}</style>
-
-      <svg style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }}>
-        <filter id="liquid-swirl" x="-50%" y="-50%" width="200%" height="200%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.005" numOctaves="2" result="noise" />
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="400" xChannelSelector="R" yChannelSelector="G" />
-        </filter>
-      </svg>
-
       {resolvedArtUrl && (
-        <>
+        perfMode ? (
           <div 
-            className="blurred-background ambient-flow" 
+            className="blurred-background" 
             style={{ backgroundImage: `url(${resolvedArtUrl})` }}
           />
-          <div className="grain-overlay" />
-        </>
+        ) : (
+          <Kawarp src={resolvedArtUrl} className="blurred-background" />
+        )
       )}
       
       <LeftPanel 
@@ -387,7 +355,7 @@ export default function App() {
             userFavorites={userFavorites}
             onFavoriteToggle={handleFavoriteToggle}
             currentUser={currentUser}
-            onOpenAbout={() => setIsAboutOpen(true)} // Optional if triggered from panels
+            onOpenAbout={() => setIsAboutOpen(true)}
           />
           <SearchModal 
             isOpen={isModalOpen} 

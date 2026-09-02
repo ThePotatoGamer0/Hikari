@@ -330,7 +330,9 @@ export default function App() {
             style={{ backgroundImage: `url(${resolvedArtUrl})` }}
           />
         ) : (
-          <Kawarp src={resolvedArtUrl} className="blurred-background" />
+          <div className="blurred-background" style={{ overflow: 'hidden' }}>
+            <Kawarp src={resolvedArtUrl} style={{ width: '100%', height: '100%' }} />
+          </div>
         )
       )}
       

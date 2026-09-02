@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import '@braccato/core';
+import { ProviderChain, createSimilarityValidator } from '@braccato/provider-blyrics';
+import { detectParser } from '@braccato/parsers';
 import { 
   DndContext, 
   closestCenter, 
@@ -98,37 +100,36 @@ export default function RightPanel({
 
   useEffect(() => {
     if (activeTab !== 'lyrics' || !track) return;
+    
     const fetchSyncedLyrics = async () => {
-      setLyricsStatus("Searching LRClib...");
+      setLyricsStatus("Searching providers...");
       setLyricsData([]);
       setLyricOffset(0);
+      
       try {
-        const query = encodeURIComponent(`${track.title} ${track.author}`);
-        const res = await fetch(`/lrclib/api/search?q=${query}`);
-        if (!res.ok) throw new Error("API Error");
-        const data = await res.json();
-        const bestMatch = data.find(song => song.syncedLyrics);
-        if (bestMatch) {
-          const parsed = bestMatch.syncedLyrics.split('\n').map(line => {
-            const match = line.match(/^\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/);
-            if (match) {
-              const minutes = parseInt(match[1], 10);
-              const seconds = parseInt(match[2], 10);
-              const ms = parseInt(match[3].padEnd(3, '0'), 10);
-              const time = (minutes * 60 * 1000) + (seconds * 1000) + ms;
-              return { time, text: match[4].trim() || '♪' };
-            }
-            return null;
-          }).filter(l => l !== null);
+        const chain = new ProviderChain({
+          validator: createSimilarityValidator(track.title, track.author)
+        });
+
+        const result = await chain.fetch({
+          title: track.title,
+          artist: track.author,
+          durationMs: track.length
+        });
+
+        if (result && result.lyrics) {
+          const parsed = detectParser(result.lyrics);
           setLyricsData(parsed);
           setLyricsStatus("");
         } else {
           setLyricsStatus("No synced lyrics found for this track.");
         }
       } catch (err) {
+        console.error("Braccato provider error:", err);
         setLyricsStatus("Failed to load lyrics.");
       }
     };
+    
     fetchSyncedLyrics();
   }, [activeTab, track?.title]);
 

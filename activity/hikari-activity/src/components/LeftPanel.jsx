@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Icons from './Icons';
 
 const sanitizeMetadata = (rawTitle, rawAuthor) => {
@@ -39,19 +39,28 @@ export default function LeftPanel({
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [flashState, setFlashState] = useState(null);
 
+  const lastSyncTime = useRef(Date.now());
+  const animationRef = useRef(null);
+
   const track = status?.current_track;
-  // Fix: Prioritize URI checking
   const isFavorited = track && userFavorites.some(f => f.lavalink_identifier === (track.lavalink_identifier || track.uri || track.identifier));
 
   useEffect(() => {
-    if (!track || track.is_paused) return;
+    if (!track) return;
+    
     setLocalPos(track.position);
-    
-    const ticker = setInterval(() => {
-      setLocalPos((prev) => Math.min(prev + 1000, track.length));
-    }, 1000);
-    
-    return () => clearInterval(ticker);
+    lastSyncTime.current = Date.now();
+
+    if (track.is_paused) return;
+
+    const updatePlayhead = () => {
+      const elapsed = Date.now() - lastSyncTime.current;
+      setLocalPos(Math.min(track.position + elapsed, track.length));
+      animationRef.current = requestAnimationFrame(updatePlayhead);
+    };
+
+    animationRef.current = requestAnimationFrame(updatePlayhead);
+    return () => cancelAnimationFrame(animationRef.current);
   }, [track]);
 
   const handleSeek = (e) => {

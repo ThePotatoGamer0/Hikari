@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import '@braccato/core';
 import { 
   DndContext, 
   closestCenter, 
@@ -30,32 +31,26 @@ export default function RightPanel({
   const [activeTab, setActiveTab] = useState('queue');
   const [queueSearch, setQueueSearch] = useState('');
   
-  // Modals
   const [isClearQueueOpen, setIsClearQueueOpen] = useState(false);
   
-  // Lyrics Engine State
   const [lyricsData, setLyricsData] = useState([]);
   const [lyricsStatus, setLyricsStatus] = useState("Loading...");
-  const [localPos, setLocalPos] = useState(0);
   const [lyricOffset, setLyricOffset] = useState(0);
-  const [isAutoScroll, setIsAutoScroll] = useState(true);
 
-  // Search Engine State
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searchStatus, setSearchStatus] = useState('');
 
-  // Drag-and-Drop Local Queue State
   const [localQueue, setLocalQueue] = useState([]);
   const [activeDragId, setActiveDragId] = useState(null);
-  const syncLock = useRef(null); // Prevents poll from overwriting optimistic UI
-
-  const scrollRef = useRef(null);
+  
+  const syncLock = useRef(null); 
+  const lyricsRef = useRef(null);
+  const animationRef = useRef(null);
+  const lastSyncTime = useRef(Date.now());
   const track = status?.current_track;
 
-  // Sync the master queue to the local UI queue when not actively dragging
   useEffect(() => {
-    // If the queue size drastically changes (e.g. a song finishes), force a break of the lock to prevent out-of-bounds errors.
     const lengthMismatch = status?.queue?.length !== localQueue.length;
 
     if (!activeDragId && (!syncLock.current || lengthMismatch)) {
@@ -68,7 +63,6 @@ export default function RightPanel({
     }
   }, [status?.queue, activeDragId, localQueue.length]);
 
-  // Set up sensors for drag-and-drop
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 5 }, 
@@ -91,53 +85,22 @@ export default function RightPanel({
       const oldIndex = localQueue.findIndex((item) => item.uid === active.id);
       const newIndex = localQueue.findIndex((item) => item.uid === over.id);
 
-      // Optimistically update the UI
       setLocalQueue((items) => arrayMove(items, oldIndex, newIndex));
       
-      // Lock the UI from background poll updates for 2.5 seconds
       if (syncLock.current) clearTimeout(syncLock.current);
       syncLock.current = setTimeout(() => {
         syncLock.current = null;
       }, 2500);
 
-      // Send the move action to the backend using UID to prevent race conditions
       onAction('move', { uid: active.id, to_index: newIndex });
     }
   };
-
-  // Passive Event Listeners for smooth mobile scrolling
-  useEffect(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-
-    const handleInteract = () => {
-      if (isAutoScroll) setIsAutoScroll(false);
-    };
-
-    container.addEventListener('touchstart', handleInteract, { passive: true });
-    container.addEventListener('wheel', handleInteract, { passive: true });
-    
-    return () => {
-      container.removeEventListener('touchstart', handleInteract);
-      container.removeEventListener('wheel', handleInteract);
-    };
-  }, [isAutoScroll]);
-
-  useEffect(() => {
-    if (!track || track.is_paused || activeTab !== 'lyrics') return;
-    setLocalPos(track.position);
-    const ticker = setInterval(() => {
-      setLocalPos((prev) => Math.min(prev + 100, track.length));
-    }, 100);
-    return () => clearInterval(ticker);
-  }, [track, activeTab]);
 
   useEffect(() => {
     if (activeTab !== 'lyrics' || !track) return;
     const fetchSyncedLyrics = async () => {
       setLyricsStatus("Searching LRClib...");
       setLyricsData([]);
-      setIsAutoScroll(true);
       setLyricOffset(0);
       try {
         const query = encodeURIComponent(`${track.title} ${track.author}`);
@@ -168,6 +131,38 @@ export default function RightPanel({
     };
     fetchSyncedLyrics();
   }, [activeTab, track?.title]);
+
+  useEffect(() => {
+    if (lyricsRef.current && lyricsData.length > 0) {
+      lyricsRef.current.lyrics = lyricsData;
+    }
+  }, [lyricsData]);
+
+  useEffect(() => {
+    if (!track || activeTab !== 'lyrics') return;
+    
+    lastSyncTime.current = Date.now();
+
+    const updatePlayhead = () => {
+      if (!lyricsRef.current) return;
+      
+      let currentPos = track.position;
+      if (!track.is_paused) {
+        const elapsed = Date.now() - lastSyncTime.current;
+        currentPos += elapsed;
+      }
+      
+      const adjustedPos = Math.min(currentPos, track.length) + (lyricOffset * 1000);
+      lyricsRef.current.currentTime = adjustedPos / 1000;
+
+      if (!track.is_paused) {
+        animationRef.current = requestAnimationFrame(updatePlayhead);
+      }
+    };
+
+    updatePlayhead();
+    return () => cancelAnimationFrame(animationRef.current);
+  }, [track, activeTab, lyricOffset]);
 
   useEffect(() => {
     if (activeTab !== 'search') return;
@@ -226,24 +221,10 @@ export default function RightPanel({
     }
   };
 
-  useEffect(() => {
-    if (activeTab === 'lyrics' && scrollRef.current && isAutoScroll) {
-      const activeElement = scrollRef.current.querySelector('.lyric-line.active');
-      const container = scrollRef.current;
-      if (activeElement && container) {
-        const targetScroll = activeElement.offsetTop - (container.offsetHeight / 2) + (activeElement.offsetHeight / 2);
-        container.scrollTo({ top: targetScroll, behavior: 'smooth' });
-      }
-    }
-  }, [localPos, activeTab, isAutoScroll, lyricOffset]);
-
   const handleClearQueue = () => {
     onAction('clearqueue');
   };
-
-  const adjustedPos = localPos + (lyricOffset * 1000);
   
-  // Filter the local queue dynamically
   const filteredQueue = localQueue.filter(queueTrack => {
     if (!queueSearch) return true;
     return queueTrack.title?.toLowerCase().includes(queueSearch.toLowerCase()) || queueTrack.author?.toLowerCase().includes(queueSearch.toLowerCase());
@@ -265,7 +246,7 @@ export default function RightPanel({
         </button>
       </div>
 
-      <div className="tab-content" ref={scrollRef}>
+      <div className="tab-content">
         {activeTab === 'queue' && (
           <div className="queue-tab-wrapper">
             {localQueue.length > 0 && (
@@ -321,7 +302,7 @@ export default function RightPanel({
         )}
 
         {activeTab === 'lyrics' && (
-          <div className="synced-lyrics-container">
+          <div className="synced-lyrics-container" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             {lyricsStatus && <div className="empty-state">{lyricsStatus}</div>}
             {lyricsData.length > 0 && (
               <div className="lyrics-offset-controls">
@@ -330,16 +311,9 @@ export default function RightPanel({
                 <button onClick={() => setLyricOffset(prev => prev - 1)}>▼</button>
               </div>
             )}
-            {lyricsData.map((line, i) => {
-              const isPast = adjustedPos >= line.time;
-              const isBeforeNext = !lyricsData[i + 1] || adjustedPos < lyricsData[i + 1].time;
-              const isActive = isPast && isBeforeNext;
-              return (
-                <p key={i} className={`lyric-line ${isActive ? 'active' : ''} ${isPast && !isActive ? 'passed' : ''}`}>
-                  {line.text}
-                </p>
-              );
-            })}
+            <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+              <braccato-player ref={lyricsRef} style={{ width: '100%', height: '100%', display: 'block' }}></braccato-player>
+            </div>
           </div>
         )}
 
@@ -427,10 +401,6 @@ export default function RightPanel({
           </div>
         )}
       </div>
-
-      {activeTab === 'lyrics' && !isAutoScroll && lyricsData.length > 0 && (
-        <button className="resume-sync-btn" onClick={() => setIsAutoScroll(true)}>Resume Sync</button>
-      )}
 
       <ConfirmModal 
         isOpen={isClearQueueOpen}

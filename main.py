@@ -1098,8 +1098,23 @@ class MusicBot(commands.Bot):
 
     async def setup_hook(self):
         host = os.getenv('LAVALINK_HOST', '127.0.0.1')
-        node = wavelink.Node(uri=f'http://{host}:2333', password='youshallnotpass')
-        await wavelink.Pool.connect(nodes=[node], client=self, cache_capacity=100)
+        
+        # Primary Local Node
+        primary_node = wavelink.Node(
+            identifier="Primary",
+            uri=f'http://{host}:2333',
+            password='youshallnotpass'
+        )
+        
+        # Public Fallback Node (Replace uri and password with the active public node details you found)
+        fallback_node = wavelink.Node(
+            identifier="Public-Fallback",
+            uri='https://lavalinkv4.serenetia.com:443',
+            password='https://seretia.link/discord'
+        )
+        
+        # Connect to both nodes, Wavelink will handle load balancing automatically
+        await wavelink.Pool.connect(nodes=[primary_node, fallback_node], client=self, cache_capacity=100)
         self.add_view(PlaybackControls())
         logger.info("Wavelink nodes configured and persistent UI views registered.")
         

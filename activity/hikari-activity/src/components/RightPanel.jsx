@@ -4,12 +4,10 @@ import {
   ProviderChain, 
   createSimilarityValidator, 
   createBLyricsProvider,
+  createUnisonProvider,
   createLRCLibSyncedProvider,
-  createLRCLibPlainProvider,
   createLegatoProvider,
-  createBinimumProvider,
-  createPortatoProvider,
-  createUnisonProvider
+  createLRCLibPlainProvider
 } from '@braccato/provider-blyrics';
 import { detectParser } from '@braccato/parsers';
 import { 
@@ -61,6 +59,34 @@ export default function RightPanel({
   const animationRef = useRef(null);
   const lastSyncTime = useRef(Date.now());
   const track = status?.current_track;
+
+  useEffect(() => {
+    const originalFetch = window.fetch;
+    window.fetch = async function (...args) {
+      let url = typeof args[0] === 'string' ? args[0] : (args[0] instanceof Request ? args[0].url : '');
+      
+      if (url) {
+        if (url.includes('lrclib.net')) {
+          url = url.replace(/^https?:\/\/[^\/]+/, '/lrclib');
+        } else if (url.includes('lyrics-api.boidu.dev')) {
+          url = url.replace(/^https?:\/\/[^\/]+/, '/blyrics');
+        } else if (url.includes('unison.boidu.dev')) {
+          url = url.replace(/^https?:\/\/[^\/]+/, '/unison');
+        }
+        
+        if (typeof args[0] === 'string') {
+          args[0] = url;
+        } else if (args[0] instanceof Request) {
+          args[0] = new Request(url, args[0]);
+        }
+      }
+      return originalFetch.apply(this, args);
+    };
+    
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, []);
 
   useEffect(() => {
     const lengthMismatch = status?.queue?.length !== localQueue.length;
@@ -121,21 +147,13 @@ export default function RightPanel({
       try {
         const chain = new ProviderChain();
         
-        // Use proxy paths for your backend to bypass Discord iframe restrictions
-        chain.register("unison", createUnisonProvider({ baseUrl: '/unison/api' }));
-        chain.register("blyrics", createBLyricsProvider({ baseUrl: '/blyrics/api' }));
-        chain.register("binimum", createBinimumProvider({ baseUrl: '/binimum/api' }));
-        chain.register("portato", createPortatoProvider({ baseUrl: '/portato/api' }));
-        chain.register("lrclib-synced", createLRCLibSyncedProvider({ baseUrl: '/lrclib/api' }));
-        chain.register("legato", createLegatoProvider({ baseUrl: '/legato/api' }));
-        chain.register("lrclib-plain", createLRCLibPlainProvider({ baseUrl: '/lrclib/api' }));
+        chain.register("unison", createUnisonProvider());
+        chain.register("blyrics", createBLyricsProvider());
+        chain.register("lrclib-synced", createLRCLibSyncedProvider());
+        chain.register("legato", createLegatoProvider());
+        chain.register("lrclib-plain", createLRCLibPlainProvider());
 
         const validate = createSimilarityValidator(`${track.title} ${track.author}`, 0.5);
-
-        let videoId;
-        if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
-          videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
-        }
 
         const fetchContext = { 
           song: track.title, 
@@ -143,8 +161,8 @@ export default function RightPanel({
           duration: track.length 
         };
 
-        if (videoId) {
-          fetchContext.videoId = videoId;
+        if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
+          fetchContext.videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
         }
 
         const result = await chain.fetchLyrics(

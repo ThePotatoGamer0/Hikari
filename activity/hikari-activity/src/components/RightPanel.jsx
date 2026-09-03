@@ -113,6 +113,8 @@ export default function RightPanel({
   useEffect(() => {
     if (activeTab !== 'lyrics' || !track) return;
     
+    const abortController = new AbortController();
+
     const fetchSyncedLyrics = async () => {
       setLyricsStatus("Searching providers...");
       setLyricsData([]);
@@ -143,7 +145,10 @@ export default function RightPanel({
             artist: track.author, 
             duration: track.length 
           }, 
-          { validate }
+          { 
+            validate,
+            signal: abortController.signal
+          }
         );
 
         if (result && result.lyrics) {
@@ -155,12 +160,18 @@ export default function RightPanel({
           setLyricsStatus("No synced lyrics found for this track.");
         }
       } catch (err) {
+        if (err.name === 'AbortError') {
+          console.log("Lyrics fetch aborted");
+          return;
+        }
         console.error("Braccato provider error:", err);
         setLyricsStatus("Failed to load lyrics.");
       }
     };
     
     fetchSyncedLyrics();
+
+    return () => abortController.abort();
   }, [activeTab, track?.title]);
 
   useEffect(() => {

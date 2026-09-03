@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import '@braccato/core';
-import { ProviderChain, createSimilarityValidator } from '@braccato/provider-blyrics';
+import { ProviderChain, createSimilarityValidator, createLRCLibSyncedProvider } from '@braccato/provider-blyrics';
 import { detectParser } from '@braccato/parsers';
 import { 
   DndContext, 
@@ -107,18 +107,23 @@ export default function RightPanel({
       setLyricOffset(0);
       
       try {
-        const chain = new ProviderChain({
-          validator: createSimilarityValidator(track.title, track.author)
-        });
+        const chain = new ProviderChain();
+        chain.register("lrclib-synced", createLRCLibSyncedProvider());
 
-        const result = await chain.fetch({
-          title: track.title,
-          artist: track.author,
-          durationMs: track.length
-        });
+        const validate = createSimilarityValidator(track.title, track.author);
+
+        const result = await chain.fetchLyrics(
+          { 
+            song: track.title, 
+            artist: track.author, 
+            duration: track.length 
+          }, 
+          { validate }
+        );
 
         if (result && result.lyrics) {
-          const parsed = detectParser(result.lyrics);
+          const parser = detectParser(result.lyrics);
+          const parsed = parser.parse(result.lyrics, track.length);
           setLyricsData(parsed);
           setLyricsStatus("");
         } else {

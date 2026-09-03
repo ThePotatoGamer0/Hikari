@@ -123,10 +123,10 @@ export default function RightPanel({
       const lrcLibUrl = `/lrclib/api/search?track_name=${sParam}&artist_name=${encodeURIComponent(lrcLibAuthor)}`;
 
       const endpoints = [
-        `/unison/lyrics?q=${videoId || query}`, 
+        videoId ? `/unison/lyrics?v=${videoId}` : null, 
         bLyricsUrl,                             
         lrcLibUrl   
-      ];
+      ].filter(Boolean);
 
       let rawLyrics = null;
 
@@ -143,9 +143,10 @@ export default function RightPanel({
           if (data.error === "API key required") continue;
           
           if (Array.isArray(data)) {
-            const bestMatch = data.find(song => song.syncedLyrics || song.ttml || song.lyrics);
-            if (bestMatch) {
-              rawLyrics = bestMatch.syncedLyrics || bestMatch.ttml || bestMatch.lyrics;
+            // Find the best matching track from the LRCLib array response
+            const bestMatch = data.find(song => song.syncedLyrics);
+            if (bestMatch && bestMatch.syncedLyrics) {
+              rawLyrics = bestMatch.syncedLyrics;
               break;
             }
           } else if (data && (data.syncedLyrics || data.ttml || data.lyrics)) {
@@ -160,7 +161,8 @@ export default function RightPanel({
 
       if (rawLyrics) {
         try {
-          const parsed = detectParser(rawLyrics);
+          const parser = detectParser(rawLyrics);
+          const parsed = parser.parse(rawLyrics, track.length);
           setLyricsData(parsed);
           setLyricsStatus("");
         } catch (err) {

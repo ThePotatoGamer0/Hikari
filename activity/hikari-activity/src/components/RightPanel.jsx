@@ -121,20 +121,19 @@ export default function RightPanel({
       try {
         const chain = new ProviderChain();
         
-        // Replicating the Better Lyrics fallback chain priority
-        chain.register("blyrics-syllable", createBlyricsProvider());
-        chain.register("unison-syllable", createUnisonProvider());
-        chain.register("binilyrics-syllable", createBinilyricsProvider());
-        chain.register("portato-word", createPortatoProvider());
-        chain.register("musixmatch-word", createMusixmatchProvider());
-        chain.register("youtube-captions-line", createYoutubeCaptionsProvider());
-        chain.register("blyrics-line", createBlyricsProvider());
-        chain.register("unison-line", createUnisonProvider());
-        chain.register("binilyrics-line", createBinilyricsProvider());
-        chain.register("lrclib-line", createLRCLibSyncedProvider());
-        chain.register("legato-line", createLegatoProvider());
-        chain.register("musixmatch-line", createMusixmatchProvider());
-        chain.register("youtube-unsynced", createYoutubeProvider());
+        chain.register("blyrics-syllable", createBlyricsProvider({ baseUrl: '/blyrics/api' }));
+        chain.register("unison-syllable", createUnisonProvider({ baseUrl: '/unison/api' }));
+        chain.register("binilyrics-syllable", createBinilyricsProvider({ baseUrl: '/binilyrics/api' }));
+        chain.register("portato-word", createPortatoProvider({ baseUrl: '/portato/api' }));
+        chain.register("musixmatch-word", createMusixmatchProvider({ baseUrl: '/musixmatch/api' }));
+        chain.register("youtube-captions-line", createYoutubeCaptionsProvider({ baseUrl: '/youtube-captions/api' }));
+        chain.register("blyrics-line", createBlyricsProvider({ baseUrl: '/blyrics/api' }));
+        chain.register("unison-line", createUnisonProvider({ baseUrl: '/unison/api' }));
+        chain.register("binilyrics-line", createBinilyricsProvider({ baseUrl: '/binilyrics/api' }));
+        chain.register("lrclib-line", createLRCLibSyncedProvider({ baseUrl: '/lrclib/api' }));
+        chain.register("legato-line", createLegatoProvider({ baseUrl: '/legato/api' }));
+        chain.register("musixmatch-line", createMusixmatchProvider({ baseUrl: '/musixmatch/api' }));
+        chain.register("youtube-unsynced", createYoutubeProvider({ baseUrl: '/youtube/api' }));
 
         const validate = createSimilarityValidator(track.title, track.author);
 

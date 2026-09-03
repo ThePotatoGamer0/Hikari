@@ -1,6 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import '@braccato/core';
-import { ProviderChain, createSimilarityValidator, createLRCLibSyncedProvider } from '@braccato/provider-blyrics';
+import { 
+  ProviderChain, 
+  createSimilarityValidator, 
+  createBlyricsProvider,
+  createUnisonProvider,
+  createBinilyricsProvider,
+  createPortatoProvider,
+  createMusixmatchProvider,
+  createYoutubeCaptionsProvider,
+  createLRCLibSyncedProvider,
+  createLegatoProvider,
+  createYoutubeProvider
+} from '@braccato/provider-blyrics';
 import { detectParser } from '@braccato/parsers';
 import { 
   DndContext, 
@@ -108,7 +120,21 @@ export default function RightPanel({
       
       try {
         const chain = new ProviderChain();
-        chain.register("lrclib-synced", createLRCLibSyncedProvider());
+        
+        // Replicating the Better Lyrics fallback chain priority
+        chain.register("blyrics-syllable", createBlyricsProvider());
+        chain.register("unison-syllable", createUnisonProvider());
+        chain.register("binilyrics-syllable", createBinilyricsProvider());
+        chain.register("portato-word", createPortatoProvider());
+        chain.register("musixmatch-word", createMusixmatchProvider());
+        chain.register("youtube-captions-line", createYoutubeCaptionsProvider());
+        chain.register("blyrics-line", createBlyricsProvider());
+        chain.register("unison-line", createUnisonProvider());
+        chain.register("binilyrics-line", createBinilyricsProvider());
+        chain.register("lrclib-line", createLRCLibSyncedProvider());
+        chain.register("legato-line", createLegatoProvider());
+        chain.register("musixmatch-line", createMusixmatchProvider());
+        chain.register("youtube-unsynced", createYoutubeProvider());
 
         const validate = createSimilarityValidator(track.title, track.author);
 

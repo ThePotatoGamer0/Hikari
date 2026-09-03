@@ -4,10 +4,12 @@ import {
   ProviderChain, 
   createSimilarityValidator, 
   createBLyricsProvider,
-  createUnisonProvider,
   createLRCLibSyncedProvider,
+  createLRCLibPlainProvider,
   createLegatoProvider,
-  createLRCLibPlainProvider
+  createBinimumProvider,
+  createPortatoProvider,
+  createUnisonProvider
 } from '@braccato/provider-blyrics';
 import { detectParser } from '@braccato/parsers';
 import { 
@@ -59,34 +61,6 @@ export default function RightPanel({
   const animationRef = useRef(null);
   const lastSyncTime = useRef(Date.now());
   const track = status?.current_track;
-
-  useEffect(() => {
-    const originalFetch = window.fetch;
-    window.fetch = async function (...args) {
-      let url = typeof args[0] === 'string' ? args[0] : (args[0] instanceof Request ? args[0].url : '');
-      
-      if (url) {
-        if (url.includes('lrclib.net')) {
-          url = url.replace(/^https?:\/\/[^\/]+/, '/lrclib');
-        } else if (url.includes('lyrics-api.boidu.dev')) {
-          url = url.replace(/^https?:\/\/[^\/]+/, '/blyrics');
-        } else if (url.includes('unison.boidu.dev')) {
-          url = url.replace(/^https?:\/\/[^\/]+/, '/unison');
-        }
-        
-        if (typeof args[0] === 'string') {
-          args[0] = url;
-        } else if (args[0] instanceof Request) {
-          args[0] = new Request(url, args[0]);
-        }
-      }
-      return originalFetch.apply(this, args);
-    };
-    
-    return () => {
-      window.fetch = originalFetch;
-    };
-  }, []);
 
   useEffect(() => {
     const lengthMismatch = status?.queue?.length !== localQueue.length;
@@ -149,6 +123,8 @@ export default function RightPanel({
         
         chain.register("unison", createUnisonProvider());
         chain.register("blyrics", createBLyricsProvider());
+        chain.register("portato", createPortatoProvider());
+        chain.register("binimum", createBinimumProvider());
         chain.register("lrclib-synced", createLRCLibSyncedProvider());
         chain.register("legato", createLegatoProvider());
         chain.register("lrclib-plain", createLRCLibPlainProvider());
@@ -162,7 +138,10 @@ export default function RightPanel({
         };
 
         if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
-          fetchContext.videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
+          const videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
+          if (videoId) {
+            fetchContext.videoId = videoId;
+          }
         }
 
         const result = await chain.fetchLyrics(

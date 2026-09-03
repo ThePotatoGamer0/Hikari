@@ -123,7 +123,7 @@ export default function RightPanel({
       const lrcLibUrl = `/lrclib/api/search?track_name=${sParam}&artist_name=${encodeURIComponent(lrcLibAuthor)}`;
 
       const endpoints = [
-        `/unison/search?q=${videoId || query}`, 
+        `/unison/lyrics?q=${videoId || query}`, 
         bLyricsUrl,                             
         lrcLibUrl   
       ];
@@ -160,8 +160,7 @@ export default function RightPanel({
 
       if (rawLyrics) {
         try {
-          const parser = detectParser(rawLyrics);
-          const parsed = parser.parse(rawLyrics, track.length);
+          const parsed = detectParser(rawLyrics);
           setLyricsData(parsed);
           setLyricsStatus("");
         } catch (err) {

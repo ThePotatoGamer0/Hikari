@@ -1,16 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import '@braccato/core';
-import { 
-  ProviderChain, 
-  createSimilarityValidator, 
-  createBLyricsProvider,
-  createLRCLibSyncedProvider,
-  createLRCLibPlainProvider,
-  createLegatoProvider,
-  createBinimumProvider,
-  createPortatoProvider,
-  createUnisonProvider
-} from '@braccato/provider-blyrics';
 import { detectParser } from '@braccato/parsers';
 import { 
   DndContext, 
@@ -118,55 +107,61 @@ export default function RightPanel({
       setLyricsData([]);
       setLyricOffset(0);
       
-      try {
-        const chain = new ProviderChain();
+      const query = encodeURIComponent(`${track.title} ${track.author}`);
+      
+      let videoId = '';
+      if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
+        videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
+      }
+
+      // Priority fallback chain utilizing your Discord proxy mappings
+      const endpoints = [
+        `/unison/search?q=${videoId || query}`, // 1. Unison
+        `/blyrics/search?q=${query}`,           // 2. BetterLyrics
+        `/lrclib/api/search?q=${query}`         // 3. LRCLib 
+      ];
+
+      let rawLyrics = null;
+
+      for (const endpoint of endpoints) {
+        if (abortController.signal.aborted) return;
         
-        chain.register("unison", createUnisonProvider());
-        chain.register("blyrics", createBLyricsProvider());
-        chain.register("portato", createPortatoProvider());
-        chain.register("binimum", createBinimumProvider());
-        chain.register("lrclib-synced", createLRCLibSyncedProvider());
-        chain.register("legato", createLegatoProvider());
-        chain.register("lrclib-plain", createLRCLibPlainProvider());
-
-        const validate = createSimilarityValidator(`${track.title} ${track.author}`, 0.5);
-
-        const fetchContext = { 
-          song: track.title, 
-          artist: track.author, 
-          duration: track.length 
-        };
-
-        if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
-          const videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
-          if (videoId) {
-            fetchContext.videoId = videoId;
+        try {
+          const res = await fetch(endpoint, { signal: abortController.signal });
+          if (!res.ok) continue;
+          
+          const data = await res.json();
+          
+          // Handle both array responses (LRCLib style) and direct object responses
+          if (Array.isArray(data)) {
+            const bestMatch = data.find(song => song.syncedLyrics || song.ttml || song.lyrics);
+            if (bestMatch) {
+              rawLyrics = bestMatch.syncedLyrics || bestMatch.ttml || bestMatch.lyrics;
+              break;
+            }
+          } else if (data && (data.syncedLyrics || data.ttml || data.lyrics)) {
+            rawLyrics = data.syncedLyrics || data.ttml || data.lyrics;
+            break;
           }
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+          console.warn(`Failed fetching from ${endpoint}:`, err);
         }
+      }
 
-        const result = await chain.fetchLyrics(
-          fetchContext, 
-          { 
-            validate,
-            signal: abortController.signal
-          }
-        );
-
-        if (result && result.lyrics) {
-          const parser = detectParser(result.lyrics);
-          const parsed = parser.parse(result.lyrics, track.length);
+      if (rawLyrics) {
+        try {
+          // Pass the raw string to the official Braccato parser
+          const parser = detectParser(rawLyrics);
+          const parsed = parser.parse(rawLyrics, track.length);
           setLyricsData(parsed);
           setLyricsStatus("");
-        } else {
-          setLyricsStatus("No synced lyrics found for this track.");
+        } catch (err) {
+          console.error("Braccato parser error:", err);
+          setLyricsStatus("Failed to process lyrics format.");
         }
-      } catch (err) {
-        if (err.name === 'AbortError') {
-          console.log("Lyrics fetch aborted");
-          return;
-        }
-        console.error("Braccato provider error:", err);
-        setLyricsStatus("Failed to load lyrics.");
+      } else {
+        setLyricsStatus("No synced lyrics found for this track.");
       }
     };
     

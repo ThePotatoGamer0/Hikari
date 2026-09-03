@@ -3,15 +3,13 @@ import '@braccato/core';
 import { 
   ProviderChain, 
   createSimilarityValidator, 
-  createBlyricsProvider,
-  createUnisonProvider,
-  createBinilyricsProvider,
-  createPortatoProvider,
-  createMusixmatchProvider,
-  createYoutubeCaptionsProvider,
+  createBLyricsProvider,
   createLRCLibSyncedProvider,
+  createLRCLibPlainProvider,
   createLegatoProvider,
-  createYoutubeProvider
+  createBinimumProvider,
+  createPortatoProvider,
+  createUnisonProvider
 } from '@braccato/provider-blyrics';
 import { detectParser } from '@braccato/parsers';
 import { 
@@ -123,28 +121,34 @@ export default function RightPanel({
       try {
         const chain = new ProviderChain();
         
-        chain.register("blyrics-syllable", createBlyricsProvider({ baseUrl: '/blyrics/api' }));
-        chain.register("unison-syllable", createUnisonProvider({ baseUrl: '/unison/api' }));
-        chain.register("binilyrics-syllable", createBinilyricsProvider({ baseUrl: '/binilyrics/api' }));
-        chain.register("portato-word", createPortatoProvider({ baseUrl: '/portato/api' }));
-        chain.register("musixmatch-word", createMusixmatchProvider({ baseUrl: '/musixmatch/api' }));
-        chain.register("youtube-captions-line", createYoutubeCaptionsProvider({ baseUrl: '/youtube-captions/api' }));
-        chain.register("blyrics-line", createBlyricsProvider({ baseUrl: '/blyrics/api' }));
-        chain.register("unison-line", createUnisonProvider({ baseUrl: '/unison/api' }));
-        chain.register("binilyrics-line", createBinilyricsProvider({ baseUrl: '/binilyrics/api' }));
-        chain.register("lrclib-line", createLRCLibSyncedProvider({ baseUrl: '/lrclib/api' }));
-        chain.register("legato-line", createLegatoProvider({ baseUrl: '/legato/api' }));
-        chain.register("musixmatch-line", createMusixmatchProvider({ baseUrl: '/musixmatch/api' }));
-        chain.register("youtube-unsynced", createYoutubeProvider({ baseUrl: '/youtube/api' }));
+        // Use proxy paths for your backend to bypass Discord iframe restrictions
+        chain.register("unison", createUnisonProvider({ baseUrl: '/unison/api' }));
+        chain.register("blyrics", createBLyricsProvider({ baseUrl: '/blyrics/api' }));
+        chain.register("binimum", createBinimumProvider({ baseUrl: '/binimum/api' }));
+        chain.register("portato", createPortatoProvider({ baseUrl: '/portato/api' }));
+        chain.register("lrclib-synced", createLRCLibSyncedProvider({ baseUrl: '/lrclib/api' }));
+        chain.register("legato", createLegatoProvider({ baseUrl: '/legato/api' }));
+        chain.register("lrclib-plain", createLRCLibPlainProvider({ baseUrl: '/lrclib/api' }));
 
-        const validate = createSimilarityValidator(track.title, track.author);
+        const validate = createSimilarityValidator(`${track.title} ${track.author}`, 0.5);
+
+        let videoId;
+        if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
+          videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
+        }
+
+        const fetchContext = { 
+          song: track.title, 
+          artist: track.author, 
+          duration: track.length 
+        };
+
+        if (videoId) {
+          fetchContext.videoId = videoId;
+        }
 
         const result = await chain.fetchLyrics(
-          { 
-            song: track.title, 
-            artist: track.author, 
-            duration: track.length 
-          }, 
+          fetchContext, 
           { 
             validate,
             signal: abortController.signal

@@ -108,16 +108,21 @@ export default function RightPanel({
       setLyricOffset(0);
       
       const query = encodeURIComponent(`${track.title} ${track.author}`);
+      const sParam = encodeURIComponent(track.title);
+      const aParam = encodeURIComponent(track.author);
+      const dParam = Math.floor(track.length / 1000);
       
       let videoId = '';
       if (track.uri?.includes('youtube.com') || track.uri?.includes('youtu.be')) {
         videoId = track.uri.split('v=')[1]?.split('&')[0] || track.uri.split('/').pop();
       }
 
+      const bLyricsUrl = `/blyrics/getLyrics?s=${sParam}&a=${aParam}&d=${dParam}${videoId ? `&videoId=${videoId}` : ''}`;
+
       // Priority fallback chain utilizing your Discord proxy mappings
       const endpoints = [
         `/unison/search?q=${videoId || query}`, // 1. Unison
-        `/blyrics/search?q=${query}`,           // 2. BetterLyrics
+        bLyricsUrl,                             // 2. BetterLyrics
         `/lrclib/api/search?q=${query}`         // 3. LRCLib 
       ];
 

@@ -118,12 +118,14 @@ export default function RightPanel({
       }
 
       const bLyricsUrl = `/blyrics/getLyrics?s=${sParam}&a=${aParam}&d=${dParam}${videoId ? `&videoId=${videoId}` : ''}`;
+      
+      const lrcLibAuthor = track.author ? track.author.replace(/\s*-\s*Topic$/i, '').trim() : '';
+      const lrcLibUrl = `/lrclib/api/search?track_name=${sParam}&artist_name=${encodeURIComponent(lrcLibAuthor)}`;
 
-      // Priority fallback chain utilizing your Discord proxy mappings
       const endpoints = [
-        `/unison/search?q=${videoId || query}`, // 1. Unison
-        bLyricsUrl,                             // 2. BetterLyrics
-        `/lrclib/api/search?q=${query}`         // 3. LRCLib 
+        `/unison/search?q=${videoId || query}`, 
+        bLyricsUrl,                             
+        lrcLibUrl   
       ];
 
       let rawLyrics = null;
@@ -133,11 +135,13 @@ export default function RightPanel({
         
         try {
           const res = await fetch(endpoint, { signal: abortController.signal });
+          
           if (!res.ok) continue;
           
           const data = await res.json();
           
-          // Handle both array responses (LRCLib style) and direct object responses
+          if (data.error === "API key required") continue;
+          
           if (Array.isArray(data)) {
             const bestMatch = data.find(song => song.syncedLyrics || song.ttml || song.lyrics);
             if (bestMatch) {
@@ -156,7 +160,6 @@ export default function RightPanel({
 
       if (rawLyrics) {
         try {
-          // Pass the raw string to the official Braccato parser
           const parser = detectParser(rawLyrics);
           const parsed = parser.parse(rawLyrics, track.length);
           setLyricsData(parsed);
